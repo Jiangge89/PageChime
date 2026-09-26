@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>PageChime listens to your storytelling to play matching sound effects. Your voice is processed during the reading session and is never saved.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>PageChime uses speech recognition to detect story events like animals, weather, and actions, so it can play matching sounds. Transcripts are not saved.</string>
+</dict>
+</plist>
