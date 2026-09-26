@@ -3,7 +3,7 @@ import Foundation
 final class StoryEventEngine {
     private let triggers: [TriggerEntry]
     private var cooldowns: [String: Date] = [:]
-    private let maxEffectsPerSentence = 2
+    private let maxEffectsPerSentence = 10
 
     var currentTime: () -> Date = { Date() }
 
@@ -127,17 +127,19 @@ final class StoryEventEngine {
     // MARK: - Negation Detection
 
     private func isNegated(keyword: String, in text: String, language: ReadingLanguage) -> Bool {
-        let clause = extractClause(containing: keyword, in: text)
+        guard let keyRange = text.range(of: keyword) else { return false }
 
         switch language {
         case .english:
-            let negations = [
-                "not ", " not", "n't ", "never ", "without ", "no ",
-            ]
-            return negations.contains { clause.contains($0) }
+            let negations = ["not ", " not", "n't ", "never ", "without ", "no "]
+            let start = text.index(keyRange.lowerBound, offsetBy: -15, limitedBy: text.startIndex) ?? text.startIndex
+            let prefix = String(text[start..<keyRange.lowerBound])
+            return negations.contains { prefix.contains($0) }
         case .chinese:
-            let negations = ["没有", "不会", "不", "没", "别", "无"]
-            return negations.contains { clause.contains($0) }
+            let negations = ["没有", "不会", "不是", "不", "没", "别", "无"]
+            let start = text.index(keyRange.lowerBound, offsetBy: -5, limitedBy: text.startIndex) ?? text.startIndex
+            let prefix = String(text[start..<keyRange.lowerBound])
+            return negations.contains { prefix.contains($0) }
         }
     }
 
@@ -166,27 +168,4 @@ final class StoryEventEngine {
         return false
     }
 
-    private func extractClause(containing keyword: String, in text: String) -> String {
-        guard let keyRange = text.range(of: keyword) else { return text }
-
-        let delimiters: [Character] = [",", ";", "，", "；"]
-
-        var start = text.startIndex
-        for i in text.indices where i < keyRange.lowerBound {
-            if delimiters.contains(text[i]) {
-                start = text.index(after: i)
-            }
-        }
-
-        var end = text.endIndex
-        var foundEnd = false
-        for i in text.indices where i >= keyRange.upperBound && !foundEnd {
-            if delimiters.contains(text[i]) {
-                end = i
-                foundEnd = true
-            }
-        }
-
-        return String(text[start..<end])
-    }
 }

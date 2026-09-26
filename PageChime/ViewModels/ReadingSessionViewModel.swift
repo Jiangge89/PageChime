@@ -15,7 +15,6 @@ final class ReadingSessionViewModel: ObservableObject {
     private let soundPlayer: SoundEffectPlaying
     private var sessionID: UInt = 0
     private var analysisWorkItem: DispatchWorkItem?
-    private var processedSentenceHashes: Set<Int> = []
     private var lastAnalyzedLength: Int = 0
 
     var isListening: Bool { state == .listening }
@@ -87,7 +86,6 @@ final class ReadingSessionViewModel: ObservableObject {
         eventEngine.reset()
         transcript = ""
         recentEffects = []
-        processedSentenceHashes = []
         lastAnalyzedLength = 0
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -131,18 +129,19 @@ final class ReadingSessionViewModel: ObservableObject {
 
     private func analyzeTranscript(_ text: String) {
         guard !text.isEmpty else { return }
+        guard text.count > lastAnalyzedLength else { return }
 
-        let windowSize = min(text.count, 200)
-        let window = String(text.suffix(windowSize))
+        let overlap = 10
+        let start = max(0, lastAnalyzedLength - overlap)
+        let newText = String(text.suffix(text.count - start))
 
-        let events = eventEngine.analyze(text: window, language: language)
+        let events = eventEngine.analyze(text: newText, language: language)
         for event in events {
-            let sentenceKey = event.sourceText.hashValue ^ event.soundID.hashValue
-            guard !processedSentenceHashes.contains(sentenceKey) else { continue }
-            processedSentenceHashes.insert(sentenceKey)
             soundPlayer.play(event: event)
             addRecentEffect(event)
         }
+
+        lastAnalyzedLength = text.count
     }
 
     private func addRecentEffect(_ event: StoryEvent) {
