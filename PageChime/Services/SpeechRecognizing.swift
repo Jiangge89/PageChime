@@ -5,6 +5,7 @@ protocol SpeechRecognizing: AnyObject {
     var state: ListeningState { get }
     var onTranscriptUpdate: ((String) -> Void)? { get set }
     var onStateChange: ((ListeningState) -> Void)? { get set }
+    var contextualStrings: [String] { get set }
     func requestPermissions() async -> Bool
     func start(language: ReadingLanguage) async throws
     func stop()

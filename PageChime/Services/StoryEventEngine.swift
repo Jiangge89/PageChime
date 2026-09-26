@@ -47,11 +47,12 @@ final class StoryEventEngine {
 
             let langKey = language.rawValue
             guard let keywords = trigger.keywords[langKey] else { continue }
+            let excludes = trigger.excludePatterns[langKey]?.map { $0.lowercased() } ?? []
 
             var matched = false
             for keyword in keywords {
                 let keyLower = keyword.lowercased()
-                if lower.contains(keyLower) {
+                if matchesKeyword(keyLower, in: lower, excludes: excludes) {
                     if isNegated(keyword: keyLower, in: lower, language: language) {
                         continue
                     }
@@ -138,6 +139,31 @@ final class StoryEventEngine {
             let negations = ["没有", "不会", "不", "没", "别", "无"]
             return negations.contains { clause.contains($0) }
         }
+    }
+
+    private func matchesKeyword(_ keyword: String, in text: String, excludes: [String]) -> Bool {
+        guard !excludes.isEmpty else { return text.contains(keyword) }
+
+        var excludedRanges: [Range<String.Index>] = []
+        for exclude in excludes {
+            var searchStart = text.startIndex
+            while searchStart < text.endIndex,
+                  let range = text.range(of: exclude, range: searchStart..<text.endIndex) {
+                excludedRanges.append(range)
+                searchStart = range.upperBound
+            }
+        }
+
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let range = text.range(of: keyword, range: searchStart..<text.endIndex) {
+            let isExcluded = excludedRanges.contains { excludeRange in
+                range.lowerBound >= excludeRange.lowerBound && range.upperBound <= excludeRange.upperBound
+            }
+            if !isExcluded { return true }
+            searchStart = range.upperBound
+        }
+        return false
     }
 
     private func extractClause(containing keyword: String, in text: String) -> String {

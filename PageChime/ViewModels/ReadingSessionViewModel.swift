@@ -70,6 +70,7 @@ final class ReadingSessionViewModel: ObservableObject {
         }
 
         do {
+            speechService.contextualStrings = TriggerLibrary.contextualStrings(for: language)
             try await speechService.start(language: language)
             UIApplication.shared.isIdleTimerDisabled = true
         } catch {
