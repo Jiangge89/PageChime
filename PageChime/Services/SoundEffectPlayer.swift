@@ -6,7 +6,7 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
     private var ambiencePlayer: AVAudioPlayer?
     private var currentAmbienceSoundID: String?
     private var volume: Float = 0.4
-    private var isStopped = false
+    private var pendingWorkItems: [DispatchWorkItem] = []
 
     private let ambienceSounds: Set<String> = [
         "rain_light", "wind", "storm",
@@ -31,11 +31,11 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
             if event.delayMilliseconds > 0 {
                 let delay = Double(event.delayMilliseconds) / 1000.0
                 let soundID = event.soundID
-                isStopped = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    guard let self, !self.isStopped else { return }
-                    self.startPlaying(player: player, soundID: soundID, isAmbience: isAmbience)
+                let workItem = DispatchWorkItem { [weak self] in
+                    self?.startPlaying(player: player, soundID: soundID, isAmbience: isAmbience)
                 }
+                pendingWorkItems.append(workItem)
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
             } else {
                 startPlaying(player: player, soundID: event.soundID, isAmbience: isAmbience)
             }
@@ -45,7 +45,10 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
     }
 
     func stopAll() {
-        isStopped = true
+        for item in pendingWorkItems {
+            item.cancel()
+        }
+        pendingWorkItems.removeAll()
         for (_, player) in players {
             player.stop()
         }

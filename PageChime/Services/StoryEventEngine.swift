@@ -154,7 +154,7 @@ final class StoryEventEngine {
 
         var end = text.endIndex
         var foundEnd = false
-        for i in text.indices where i > keyRange.upperBound && !foundEnd {
+        for i in text.indices where i >= keyRange.upperBound && !foundEnd {
             if delimiters.contains(text[i]) {
                 end = i
                 foundEnd = true

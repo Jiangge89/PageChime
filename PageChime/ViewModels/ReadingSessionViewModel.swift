@@ -13,9 +13,13 @@ final class ReadingSessionViewModel: ObservableObject {
     private let speechService: SpeechRecognizing
     private let eventEngine: StoryEventEngine
     private let soundPlayer: SoundEffectPlaying
-    private var lastAnalyzedTranscript: String = ""
+    private var sessionID: UInt = 0
+    private var analysisWorkItem: DispatchWorkItem?
+    private var processedSentenceHashes: Set<Int> = []
+    private var lastAnalyzedLength: Int = 0
 
     var isListening: Bool { state == .listening }
+    private var isStartingOrListening: Bool { state == .starting || state == .listening }
 
     init(
         speechService: SpeechRecognizing = SpeechRecognizerService(),
@@ -31,7 +35,7 @@ final class ReadingSessionViewModel: ObservableObject {
     // MARK: - User Actions
 
     func toggleListening() {
-        if isListening {
+        if isStartingOrListening {
             stopSession()
         } else {
             Task { await startSession() }
@@ -39,7 +43,7 @@ final class ReadingSessionViewModel: ObservableObject {
     }
 
     func changeLanguage(_ newLanguage: ReadingLanguage) {
-        let wasListening = isListening
+        let wasListening = isStartingOrListening
         if wasListening { stopSession() }
         language = newLanguage
         if wasListening {
@@ -55,6 +59,10 @@ final class ReadingSessionViewModel: ObservableObject {
     // MARK: - Session Lifecycle
 
     private func startSession() async {
+        guard state == .ready || state == .permissionRequired || state.isError else { return }
+        state = .starting
+        sessionID &+= 1
+
         let granted = await speechService.requestPermissions()
         guard granted else {
             state = .permissionRequired
@@ -70,12 +78,16 @@ final class ReadingSessionViewModel: ObservableObject {
     }
 
     private func stopSession() {
+        sessionID &+= 1
+        analysisWorkItem?.cancel()
+        analysisWorkItem = nil
         speechService.stop()
         soundPlayer.stopAll()
         eventEngine.reset()
         transcript = ""
         recentEffects = []
-        lastAnalyzedTranscript = ""
+        processedSentenceHashes = []
+        lastAnalyzedLength = 0
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -83,28 +95,50 @@ final class ReadingSessionViewModel: ObservableObject {
 
     private func setupCallbacks() {
         speechService.onTranscriptUpdate = { [weak self] newTranscript in
+            guard let self else { return }
+            let capturedSession = self.sessionID
             Task { @MainActor in
-                self?.onTranscriptUpdated(newTranscript)
+                guard self.sessionID == capturedSession else { return }
+                self.onTranscriptUpdated(newTranscript)
             }
         }
 
         speechService.onStateChange = { [weak self] newState in
+            guard let self else { return }
+            let capturedSession = self.sessionID
             Task { @MainActor in
-                self?.state = newState
+                guard self.sessionID == capturedSession else { return }
+                self.state = newState
             }
         }
     }
 
     private func onTranscriptUpdated(_ newTranscript: String) {
         transcript = newTranscript
-        guard newTranscript != lastAnalyzedTranscript else { return }
-        lastAnalyzedTranscript = newTranscript
 
-        let windowSize = min(newTranscript.count, 200)
-        let window = String(newTranscript.suffix(windowSize))
+        analysisWorkItem?.cancel()
+        let capturedSession = sessionID
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionID == capturedSession else { return }
+                self.analyzeTranscript(newTranscript)
+            }
+        }
+        analysisWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem)
+    }
+
+    private func analyzeTranscript(_ text: String) {
+        guard !text.isEmpty else { return }
+
+        let windowSize = min(text.count, 200)
+        let window = String(text.suffix(windowSize))
 
         let events = eventEngine.analyze(text: window, language: language)
         for event in events {
+            let sentenceKey = event.sourceText.hashValue ^ event.soundID.hashValue
+            guard !processedSentenceHashes.contains(sentenceKey) else { continue }
+            processedSentenceHashes.insert(sentenceKey)
             soundPlayer.play(event: event)
             addRecentEffect(event)
         }
@@ -115,5 +149,12 @@ final class ReadingSessionViewModel: ObservableObject {
         if recentEffects.count > 3 {
             recentEffects = Array(recentEffects.prefix(3))
         }
+    }
+}
+
+private extension ListeningState {
+    var isError: Bool {
+        if case .error = self { return true }
+        return false
     }
 }

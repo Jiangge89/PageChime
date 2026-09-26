@@ -2,6 +2,7 @@ import Foundation
 
 enum ListeningState: Equatable {
     case ready
+    case starting
     case listening
     case paused
     case permissionRequired
@@ -10,6 +11,7 @@ enum ListeningState: Equatable {
     var displayText: String {
         switch self {
         case .ready: return "Ready"
+        case .starting: return "Starting…"
         case .listening: return "Listening"
         case .paused: return "Paused"
         case .permissionRequired: return "Permission Required"

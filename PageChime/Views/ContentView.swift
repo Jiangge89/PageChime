@@ -69,23 +69,32 @@ struct ContentView: View {
 
     // MARK: - Main Button
 
+    private var isActive: Bool {
+        viewModel.state == .starting || viewModel.state == .listening
+    }
+
     private var mainButton: some View {
         Button {
             viewModel.toggleListening()
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: viewModel.isListening ? "stop.fill" : "book.fill")
-                    .font(.title2)
-                Text(viewModel.isListening ? stopButtonLabel : startButtonLabel)
+                if viewModel.state == .starting {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: isActive ? "stop.fill" : "book.fill")
+                        .font(.title2)
+                }
+                Text(isActive ? stopButtonLabel : startButtonLabel)
                     .font(.title3.weight(.semibold))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
-            .background(viewModel.isListening ? Color.red.opacity(0.85) : Theme.accent)
+            .background(isActive ? Color.red.opacity(0.85) : Theme.accent)
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
-        .accessibilityLabel(viewModel.isListening ? "Stop reading" : "Start reading")
+        .accessibilityLabel(isActive ? "Stop reading" : "Start reading")
     }
 
     private var startButtonLabel: String {
@@ -114,6 +123,7 @@ struct ContentView: View {
     private var statusColor: Color {
         switch viewModel.state {
         case .ready: return .gray
+        case .starting: return .orange
         case .listening: return .green
         case .paused: return .orange
         case .permissionRequired: return .yellow

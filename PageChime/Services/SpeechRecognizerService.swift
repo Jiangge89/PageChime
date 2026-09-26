@@ -16,6 +16,7 @@ final class SpeechRecognizerService: SpeechRecognizing {
     private var accumulatedTranscript: String = ""
     private var isListening = false
     private var currentLanguage: ReadingLanguage = .english
+    private var sessionGeneration: UInt = 0
 
     func requestPermissions() async -> Bool {
         let micGranted = await withCheckedContinuation { continuation in
@@ -43,6 +44,7 @@ final class SpeechRecognizerService: SpeechRecognizing {
 
     func start(language: ReadingLanguage) async throws {
         currentLanguage = language
+        sessionGeneration &+= 1
         speechRecognizer = findAvailableRecognizer(for: language)
 
         guard let speechRecognizer, speechRecognizer.isAvailable else {
@@ -73,7 +75,6 @@ final class SpeechRecognizerService: SpeechRecognizing {
                 return recognizer
             }
         }
-        // Last resort: check all supported locales for one matching the language prefix
         let supported = SFSpeechRecognizer.supportedLocales()
         for locale in supported where locale.language.languageCode?.identifier == language.rawValue {
             if let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable {
@@ -85,6 +86,7 @@ final class SpeechRecognizerService: SpeechRecognizing {
 
     func stop() {
         isListening = false
+        sessionGeneration &+= 1
         stopRecognitionTask()
         stopAudioEngine()
         transcript = ""
@@ -125,8 +127,9 @@ final class SpeechRecognizerService: SpeechRecognizing {
         audioEngine.prepare()
         try audioEngine.start()
 
+        let gen = sessionGeneration
         recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self else { return }
+            guard let self, self.sessionGeneration == gen else { return }
 
             if let result {
                 let taskTranscript = result.bestTranscription.formattedString
@@ -138,7 +141,7 @@ final class SpeechRecognizerService: SpeechRecognizing {
                 }
 
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.sessionGeneration == gen else { return }
                     self.transcript = fullTranscript
                     self.onTranscriptUpdate?(fullTranscript)
                 }
@@ -146,14 +149,16 @@ final class SpeechRecognizerService: SpeechRecognizing {
                 if result.isFinal {
                     self.accumulatedTranscript = fullTranscript
                     DispatchQueue.main.async { [weak self] in
-                        self?.restartIfNeeded()
+                        guard let self, self.sessionGeneration == gen else { return }
+                        self.restartIfNeeded()
                     }
                 }
             }
 
             if error != nil {
                 DispatchQueue.main.async { [weak self] in
-                    self?.restartIfNeeded()
+                    guard let self, self.sessionGeneration == gen else { return }
+                    self.restartIfNeeded()
                 }
             }
         }
