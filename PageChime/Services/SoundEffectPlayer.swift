@@ -7,16 +7,22 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
     private var currentAmbienceSoundID: String?
     private var volume: Float = 0.4
     private var pendingWorkItems: [DispatchWorkItem] = []
+    private var ambienceFadeOutItem: DispatchWorkItem?
 
     private let ambienceSounds: Set<String> = [
         "rain_light", "wind", "storm",
         "forest_ambience", "ocean_waves", "night_ambience", "farm_ambience",
+        "wind_trees",
     ]
+
+    private let ambienceDuration: TimeInterval = 5
+    private let fadeDuration: TimeInterval = 2
 
     func play(event: StoryEvent) {
         let isAmbience = ambienceSounds.contains(event.soundID)
 
         if let existing = players[event.soundID], existing.isPlaying {
+            if isAmbience { scheduleAmbienceFadeOut() }
             return
         }
 
@@ -49,6 +55,8 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
             item.cancel()
         }
         pendingWorkItems.removeAll()
+        ambienceFadeOutItem?.cancel()
+        ambienceFadeOutItem = nil
         for (_, player) in players {
             player.stop()
         }
@@ -80,13 +88,49 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
         if isAmbience {
             if currentAmbienceSoundID == soundID { return }
             ambiencePlayer?.stop()
+            ambienceFadeOutItem?.cancel()
             player.numberOfLoops = -1
             ambiencePlayer = player
             currentAmbienceSoundID = soundID
+            scheduleAmbienceFadeOut()
         }
 
         player.play()
         players[soundID] = player
+    }
+
+    private func scheduleAmbienceFadeOut() {
+        ambienceFadeOutItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.fadeOutAmbience()
+        }
+        ambienceFadeOutItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + ambienceDuration, execute: workItem)
+    }
+
+    private func fadeOutAmbience() {
+        guard let player = ambiencePlayer else { return }
+        let steps = 10
+        let interval = fadeDuration / Double(steps)
+        let volumeStep = player.volume / Float(steps)
+
+        for i in 1...steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(i)) { [weak self] in
+                guard let self else { return }
+                if i < steps {
+                    player.volume = max(0, player.volume - volumeStep)
+                } else {
+                    player.stop()
+                    if self.ambiencePlayer === player {
+                        self.ambiencePlayer = nil
+                        if let sid = self.currentAmbienceSoundID {
+                            self.players.removeValue(forKey: sid)
+                        }
+                        self.currentAmbienceSoundID = nil
+                    }
+                }
+            }
+        }
     }
 
     private func soundURL(for soundID: String) -> URL? {

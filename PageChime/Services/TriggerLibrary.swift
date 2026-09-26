@@ -66,6 +66,21 @@ enum TriggerLibrary {
             intensity: .normal, cooldownSeconds: 15, isAmbience: false,
             keywords: ["en": ["horse"], "zh": ["马"]]
         ),
+        TriggerEntry(
+            entity: "squirrel", soundID: "squirrel_chirp", eventType: .animal,
+            intensity: .soft, cooldownSeconds: 15, isAmbience: false,
+            keywords: ["en": ["squirrel"], "zh": ["松鼠"]]
+        ),
+        TriggerEntry(
+            entity: "dinosaur", soundID: "dinosaur_roar", eventType: .animal,
+            intensity: .strong, cooldownSeconds: 15, isAmbience: false,
+            keywords: ["en": ["dinosaur", "t-rex"], "zh": ["恐龙", "霸王龙"]]
+        ),
+        TriggerEntry(
+            entity: "whale", soundID: "whale_call", eventType: .animal,
+            intensity: .normal, cooldownSeconds: 15, isAmbience: false,
+            keywords: ["en": ["whale"], "zh": ["鲸鱼", "鲸"]]
+        ),
     ]
 
     // MARK: - Weather
@@ -139,6 +154,26 @@ enum TriggerLibrary {
             intensity: .normal, cooldownSeconds: 10, isAmbience: false,
             keywords: ["en": ["laugh", "laughing", "laughed"], "zh": ["笑", "大笑"]]
         ),
+        TriggerEntry(
+            entity: "door_slam", soundID: "door_slam", eventType: .action,
+            intensity: .strong, cooldownSeconds: 10, isAmbience: false,
+            keywords: ["en": ["slammed the door", "door slammed", "slam"], "zh": ["砰", "摔门", "关门"]]
+        ),
+        TriggerEntry(
+            entity: "crying", soundID: "child_crying", eventType: .action,
+            intensity: .normal, cooldownSeconds: 10, isAmbience: false,
+            keywords: ["en": ["crying", "cried", "sobbing", "tears"], "zh": ["哭", "哭泣", "流泪"]]
+        ),
+        TriggerEntry(
+            entity: "waves", soundID: "waves_crashing", eventType: .action,
+            intensity: .normal, cooldownSeconds: 10, isAmbience: false,
+            keywords: ["en": ["waves", "wave"], "zh": ["海浪", "浪花", "波浪"]]
+        ),
+        TriggerEntry(
+            entity: "children_playing", soundID: "children_playing", eventType: .action,
+            intensity: .normal, cooldownSeconds: 15, isAmbience: false,
+            keywords: ["en": ["children playing", "kids playing", "playground"], "zh": ["嬉笑", "打闹", "玩耍"]]
+        ),
     ]
 
     // MARK: - Vehicles
@@ -167,7 +202,17 @@ enum TriggerLibrary {
         TriggerEntry(
             entity: "boat", soundID: "boat", eventType: .vehicle,
             intensity: .normal, cooldownSeconds: 15, isAmbience: false,
-            keywords: ["en": ["boat", "ship"], "zh": ["船"]]
+            keywords: ["en": ["boat"], "zh": ["船"]]
+        ),
+        TriggerEntry(
+            entity: "ship", soundID: "ship_horn", eventType: .vehicle,
+            intensity: .strong, cooldownSeconds: 15, isAmbience: false,
+            keywords: ["en": ["ship", "foghorn"], "zh": ["轮船", "汽笛"]]
+        ),
+        TriggerEntry(
+            entity: "bus", soundID: "bus", eventType: .vehicle,
+            intensity: .normal, cooldownSeconds: 15, isAmbience: false,
+            keywords: ["en": ["bus"], "zh": ["公交车", "巴士", "大巴"]]
         ),
     ]
 
@@ -193,6 +238,11 @@ enum TriggerLibrary {
             entity: "farm", soundID: "farm_ambience", eventType: .environment,
             intensity: .soft, cooldownSeconds: 30, isAmbience: true,
             keywords: ["en": ["farm"], "zh": ["农场"]]
+        ),
+        TriggerEntry(
+            entity: "wind_trees", soundID: "wind_trees", eventType: .environment,
+            intensity: .soft, cooldownSeconds: 30, isAmbience: true,
+            keywords: ["en": ["rustling", "leaves blowing", "trees swaying"], "zh": ["树叶", "沙沙", "风吹树"]]
         ),
     ]
 }
