@@ -131,9 +131,7 @@ final class ReadingSessionViewModel: ObservableObject {
         guard !text.isEmpty else { return }
         guard text.count > lastAnalyzedLength else { return }
 
-        let overlap = 10
-        let start = max(0, lastAnalyzedLength - overlap)
-        let newText = String(text.suffix(text.count - start))
+        let newText = String(text.suffix(text.count - lastAnalyzedLength))
 
         let events = eventEngine.analyze(text: newText, language: language)
         for event in events {
