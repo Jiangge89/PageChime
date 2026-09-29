@@ -13,9 +13,17 @@ final class ReadingSessionViewModel: ObservableObject {
     private let speechService: SpeechRecognizing
     private let eventEngine: StoryEventEngine
     private let soundPlayer: SoundEffectPlaying
+    private let llmService: LLMService
     private var sessionID: UInt = 0
     private var analysisWorkItem: DispatchWorkItem?
     private var lastAnalyzedLength: Int = 0
+    private var currentAnalysisTask: Task<Void, Never>?
+    private var cooldowns: [String: Date] = [:]
+    private let cooldownInterval: TimeInterval = 3
+
+    private static let triggerLookup: [String: TriggerEntry] = {
+        Dictionary(uniqueKeysWithValues: TriggerLibrary.defaultTriggers.map { ($0.soundID, $0) })
+    }()
 
     var isListening: Bool { state == .listening }
     private var isStartingOrListening: Bool { state == .starting || state == .listening }
@@ -23,11 +31,13 @@ final class ReadingSessionViewModel: ObservableObject {
     init(
         speechService: SpeechRecognizing = SpeechRecognizerService(),
         eventEngine: StoryEventEngine = StoryEventEngine(),
-        soundPlayer: SoundEffectPlaying = SoundEffectPlayer()
+        soundPlayer: SoundEffectPlaying = SoundEffectPlayer(),
+        llmService: LLMService = LLMService()
     ) {
         self.speechService = speechService
         self.eventEngine = eventEngine
         self.soundPlayer = soundPlayer
+        self.llmService = llmService
         setupCallbacks()
     }
 
@@ -81,9 +91,12 @@ final class ReadingSessionViewModel: ObservableObject {
         sessionID &+= 1
         analysisWorkItem?.cancel()
         analysisWorkItem = nil
+        currentAnalysisTask?.cancel()
+        currentAnalysisTask = nil
         speechService.stop()
         soundPlayer.stopAll()
         eventEngine.reset()
+        cooldowns.removeAll()
         transcript = ""
         recentEffects = []
         lastAnalyzedLength = 0
@@ -115,6 +128,16 @@ final class ReadingSessionViewModel: ObservableObject {
     private func onTranscriptUpdated(_ newTranscript: String) {
         transcript = newTranscript
 
+        let newChars = newTranscript.count - lastAnalyzedLength
+        let threshold = language == .chinese ? 12 : 40
+
+        if newChars >= threshold {
+            analysisWorkItem?.cancel()
+            analysisWorkItem = nil
+            analyzeTranscript(newTranscript)
+            return
+        }
+
         analysisWorkItem?.cancel()
         let capturedSession = sessionID
         let workItem = DispatchWorkItem { [weak self] in
@@ -124,22 +147,61 @@ final class ReadingSessionViewModel: ObservableObject {
             }
         }
         analysisWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
     }
 
+    // MARK: - Analysis
+
     private func analyzeTranscript(_ text: String) {
-        guard !text.isEmpty else { return }
-        guard text.count > lastAnalyzedLength else { return }
+        guard !text.isEmpty, text.count > lastAnalyzedLength else { return }
 
         let newText = String(text.suffix(text.count - lastAnalyzedLength))
+        let targetLength = text.count
 
-        let events = eventEngine.analyze(text: newText, language: language)
-        for event in events {
+        currentAnalysisTask?.cancel()
+        currentAnalysisTask = Task {
+            do {
+                let soundIDs = try await llmService.analyze(text: newText)
+                guard !Task.isCancelled else { return }
+                playMatchedSounds(soundIDs, sourceText: newText)
+                lastAnalyzedLength = targetLength
+            } catch {
+                guard !Task.isCancelled else { return }
+                let events = eventEngine.analyze(text: newText, language: language)
+                for event in events {
+                    soundPlayer.play(event: event)
+                    addRecentEffect(event)
+                }
+                lastAnalyzedLength = targetLength
+            }
+        }
+    }
+
+    private func playMatchedSounds(_ soundIDs: [String], sourceText: String) {
+        let now = Date()
+        for soundID in soundIDs {
+            if let lastFired = cooldowns[soundID],
+               now.timeIntervalSince(lastFired) < cooldownInterval {
+                continue
+            }
+
+            guard let trigger = Self.triggerLookup[soundID] else { continue }
+
+            let event = StoryEvent(
+                id: UUID(),
+                type: trigger.eventType,
+                entity: trigger.entity,
+                soundID: soundID,
+                intensity: trigger.intensity,
+                delayMilliseconds: 0,
+                cooldownSeconds: cooldownInterval,
+                sourceText: sourceText
+            )
+
             soundPlayer.play(event: event)
             addRecentEffect(event)
+            cooldowns[soundID] = now
         }
-
-        lastAnalyzedLength = text.count
     }
 
     private func addRecentEffect(_ event: StoryEvent) {

@@ -15,6 +15,9 @@ Packages/
 # CocoaPods
 Pods/
 
+# Secrets
+PageChime/Config/Secrets.swift
+
 # macOS
 .DS_Store
 *.swp
