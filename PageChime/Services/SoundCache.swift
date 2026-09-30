@@ -10,7 +10,7 @@ struct CacheEntry: Codable {
 final class SoundCache {
     private var entries: [CacheEntry] = []
     private let fileURL: URL
-    private let maxEntries = 500_000
+    private let maxEntries = 50_000
 
     init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
