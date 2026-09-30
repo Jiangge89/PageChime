@@ -4,11 +4,13 @@ struct CacheEntry: Codable {
     let trigger: String
     let soundIDs: [String]
     let language: String
+    var lastUsed: Date
 }
 
 final class SoundCache {
     private var entries: [CacheEntry] = []
     private let fileURL: URL
+    private let maxEntries = 5000
 
     init() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -22,36 +24,47 @@ final class SoundCache {
 
         var matchedSounds: [String] = []
         var seen = Set<String>()
+        let now = Date()
+        var touched = false
 
-        for entry in entries where entry.language == language.rawValue {
-            if normalized.contains(entry.trigger) {
-                for soundID in entry.soundIDs where !seen.contains(soundID) {
+        for i in entries.indices where entries[i].language == language.rawValue {
+            if normalized.contains(entries[i].trigger) {
+                for soundID in entries[i].soundIDs where !seen.contains(soundID) {
                     matchedSounds.append(soundID)
                     seen.insert(soundID)
                 }
+                entries[i].lastUsed = now
+                touched = true
             }
         }
 
+        if touched { save() }
         return matchedSounds
     }
 
     func store(triggers: [LLMSoundMatch], language: ReadingLanguage) {
         var changed = false
+        let now = Date()
+
         for match in triggers {
             let normalized = Self.normalize(match.trigger, language: language)
             guard normalized.count >= 2 else { continue }
 
             if let idx = entries.firstIndex(where: { $0.trigger == normalized && $0.language == language.rawValue }) {
                 if entries[idx].soundIDs != [match.id] {
-                    entries[idx] = CacheEntry(trigger: normalized, soundIDs: [match.id], language: language.rawValue)
+                    entries[idx] = CacheEntry(trigger: normalized, soundIDs: [match.id], language: language.rawValue, lastUsed: now)
                     changed = true
                 }
             } else {
-                entries.append(CacheEntry(trigger: normalized, soundIDs: [match.id], language: language.rawValue))
+                entries.append(CacheEntry(trigger: normalized, soundIDs: [match.id], language: language.rawValue, lastUsed: now))
                 changed = true
             }
         }
-        if changed { save() }
+
+        if changed {
+            evictIfNeeded()
+            save()
+        }
     }
 
     func reset() {
@@ -71,6 +84,14 @@ final class SoundCache {
             result = result.lowercased()
         }
         return result
+    }
+
+    // MARK: - LRU Eviction
+
+    private func evictIfNeeded() {
+        guard entries.count > maxEntries else { return }
+        entries.sort { $0.lastUsed > $1.lastUsed }
+        entries = Array(entries.prefix(maxEntries))
     }
 
     // MARK: - Persistence
