@@ -14,6 +14,7 @@ final class ReadingSessionViewModel: ObservableObject {
     private let eventEngine: StoryEventEngine
     private let soundPlayer: SoundEffectPlaying
     private let llmService: LLMService
+    private let soundCache: SoundCache
     private var sessionID: UInt = 0
     private var analysisWorkItem: DispatchWorkItem?
     private var lastAnalyzedLength: Int = 0
@@ -32,12 +33,14 @@ final class ReadingSessionViewModel: ObservableObject {
         speechService: SpeechRecognizing = SpeechRecognizerService(),
         eventEngine: StoryEventEngine = StoryEventEngine(),
         soundPlayer: SoundEffectPlaying = SoundEffectPlayer(),
-        llmService: LLMService = LLMService()
+        llmService: LLMService = LLMService(),
+        soundCache: SoundCache = SoundCache()
     ) {
         self.speechService = speechService
         self.eventEngine = eventEngine
         self.soundPlayer = soundPlayer
         self.llmService = llmService
+        self.soundCache = soundCache
         setupCallbacks()
     }
 
@@ -158,12 +161,21 @@ final class ReadingSessionViewModel: ObservableObject {
         let newText = String(text.suffix(text.count - lastAnalyzedLength))
         let targetLength = text.count
 
+        let cachedSounds = soundCache.lookup(text: newText, language: language)
+        if !cachedSounds.isEmpty {
+            playMatchedSounds(cachedSounds, sourceText: newText)
+            lastAnalyzedLength = targetLength
+            return
+        }
+
         currentAnalysisTask?.cancel()
         currentAnalysisTask = Task {
             do {
-                let soundIDs = try await llmService.analyze(text: newText)
+                let matches = try await llmService.analyze(text: newText)
                 guard !Task.isCancelled else { return }
+                let soundIDs = matches.map(\.id)
                 playMatchedSounds(soundIDs, sourceText: newText)
+                soundCache.store(triggers: matches, language: language)
                 lastAnalyzedLength = targetLength
             } catch {
                 guard !Task.isCancelled else { return }

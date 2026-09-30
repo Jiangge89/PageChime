@@ -1,5 +1,10 @@
 import Foundation
 
+struct LLMSoundMatch {
+    let id: String
+    let trigger: String
+}
+
 enum LLMError: Error {
     case noAPIKey
     case apiError(Int)
@@ -27,13 +32,14 @@ final class LLMService {
         Rules:
         - Only return sounds directly related to what's happening in the text
         - For negated events (e.g. "没有狗", "not a dog"), do NOT include that sound
-        - Return JSON: {"sounds": ["sound_id_1", "sound_id_2"]}
+        - Return JSON: {"sounds": [{"id": "sound_id", "trigger": "shortest phrase from the text that identifies this sound"}]}
+        - "trigger" must be a short substring copied from the input text (not invented), just enough to unambiguously identify the sound
         - If nothing matches, return {"sounds": []}
         - At most 5 sounds per response
         """
     }
 
-    func analyze(text: String) async throws -> [String] {
+    func analyze(text: String) async throws -> [LLMSoundMatch] {
         guard !apiKey.isEmpty else { throw LLMError.noAPIKey }
 
         let body: [String: Any] = [
@@ -60,21 +66,24 @@ final class LLMService {
             throw LLMError.apiError(code)
         }
 
-        return try parseSoundIDs(from: data)
+        return try parseSoundMatches(from: data)
     }
 
-    private func parseSoundIDs(from data: Data) throws -> [String] {
+    private func parseSoundMatches(from data: Data) throws -> [LLMSoundMatch] {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
               let content = message["content"] as? String,
               let contentData = content.data(using: .utf8),
               let parsed = try JSONSerialization.jsonObject(with: contentData) as? [String: Any],
-              let sounds = parsed["sounds"] as? [String]
+              let sounds = parsed["sounds"] as? [[String: String]]
         else {
             throw LLMError.parseError
         }
-        return sounds
+        return sounds.compactMap { dict in
+            guard let id = dict["id"], let trigger = dict["trigger"] else { return nil }
+            return LLMSoundMatch(id: id, trigger: trigger)
+        }
     }
 
     private static let soundCatalog: String = {
