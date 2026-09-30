@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = ReadingSessionViewModel()
     @State private var isPulsing = false
+    @State private var showDebugLog = false
     @AppStorage("hasSeenPrivacy") private var hasSeenPrivacy = false
 
     var body: some View {
@@ -18,6 +19,7 @@ struct ContentView: View {
                 if !hasSeenPrivacy {
                     privacyNotice
                 }
+                debugLogSection
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 24)
@@ -336,6 +338,139 @@ struct ContentView: View {
         .background(Theme.card.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Debug Log
+
+    private var debugLogSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation { showDebugLog.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "ant.fill")
+                        .font(.caption)
+                    Text("Debug Log")
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                    if !viewModel.analysisLogs.isEmpty {
+                        Text("\(viewModel.analysisLogs.count)")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.accent.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+                    Image(systemName: showDebugLog ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+            }
+
+            if showDebugLog {
+                if viewModel.analysisLogs.isEmpty {
+                    Text("No analysis yet")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Theme.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                } else {
+                    debugStats
+                    VStack(spacing: 4) {
+                        ForEach(viewModel.analysisLogs) { log in
+                            debugLogRow(log)
+                        }
+                    }
+                    Button("Clear", role: .destructive) {
+                        viewModel.clearLogs()
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    private var debugStats: some View {
+        let logs = viewModel.analysisLogs
+        let avgTotal = logs.isEmpty ? 0 : logs.map(\.totalMs).reduce(0, +) / logs.count
+        let cacheCount = logs.filter { $0.method == .cache }.count
+        let llmCount = logs.filter { $0.method == .llm }.count
+        let keywordCount = logs.filter { $0.method == .keyword }.count
+        let cacheRate = logs.isEmpty ? 0 : Int(Double(cacheCount) / Double(logs.count) * 100)
+
+        return HStack(spacing: 12) {
+            statBadge("Avg", "\(avgTotal)ms", .secondary)
+            statBadge("Cache", "\(cacheRate)%", .green)
+            statBadge("LLM", "\(llmCount)", .orange)
+            statBadge("KW", "\(keywordCount)", .blue)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func statBadge(_ label: String, _ value: String, _ color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+            Text(label)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func debugLogRow(_ log: AnalysisLog) -> some View {
+        HStack(spacing: 8) {
+            Text(log.method.rawValue)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(methodColor(log.method))
+                .frame(width: 52, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text("wait \(log.waitMs)ms")
+                        .foregroundStyle(.secondary)
+                    Text("+")
+                        .foregroundStyle(.quaternary)
+                    Text("analysis \(log.analysisMs)ms")
+                        .foregroundStyle(.secondary)
+                    Text("= \(log.totalMs)ms")
+                        .foregroundStyle(log.totalMs > 1000 ? .red : log.totalMs > 200 ? .orange : .green)
+                }
+                .font(.system(size: 9, design: .monospaced))
+
+                if !log.soundIDs.isEmpty {
+                    Text(log.soundIDs.joined(separator: ", "))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Theme.accent)
+                        .lineLimit(1)
+                }
+
+                Text(log.inputText.prefix(40) + (log.inputText.count > 40 ? "..." : ""))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func methodColor(_ method: AnalysisLog.Method) -> Color {
+        switch method {
+        case .cache: return .green
+        case .llm: return .orange
+        case .keyword: return .blue
+        case .noMatch: return .gray
+        }
     }
 }
 

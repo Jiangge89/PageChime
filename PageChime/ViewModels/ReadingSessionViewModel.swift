@@ -9,6 +9,7 @@ final class ReadingSessionViewModel: ObservableObject {
     @Published var transcript: String = ""
     @Published var recentEffects: [StoryEvent] = []
     @Published var volume: Float = 0.4
+    @Published var analysisLogs: [AnalysisLog] = []
 
     private let speechService: SpeechRecognizing
     private let eventEngine: StoryEventEngine
@@ -66,6 +67,10 @@ final class ReadingSessionViewModel: ObservableObject {
     func updateVolume(_ newVolume: Float) {
         volume = newVolume
         soundPlayer.setVolume(newVolume)
+    }
+
+    func clearLogs() {
+        analysisLogs.removeAll()
     }
 
     // MARK: - Session Lifecycle
@@ -133,11 +138,12 @@ final class ReadingSessionViewModel: ObservableObject {
 
         let newChars = newTranscript.count - lastAnalyzedLength
         let threshold = language == .chinese ? 12 : 40
+        let triggerTime = Date()
 
         if newChars >= threshold {
             analysisWorkItem?.cancel()
             analysisWorkItem = nil
-            analyzeTranscript(newTranscript)
+            analyzeTranscript(newTranscript, triggeredAt: triggerTime)
             return
         }
 
@@ -146,7 +152,7 @@ final class ReadingSessionViewModel: ObservableObject {
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionID == capturedSession else { return }
-                self.analyzeTranscript(newTranscript)
+                self.analyzeTranscript(newTranscript, triggeredAt: triggerTime)
             }
         }
         analysisWorkItem = workItem
@@ -155,15 +161,19 @@ final class ReadingSessionViewModel: ObservableObject {
 
     // MARK: - Analysis
 
-    private func analyzeTranscript(_ text: String) {
+    private func analyzeTranscript(_ text: String, triggeredAt: Date) {
         guard !text.isEmpty, text.count > lastAnalyzedLength else { return }
 
         let newText = String(text.suffix(text.count - lastAnalyzedLength))
         let targetLength = text.count
+        let analysisStart = Date()
+        let waitMs = Int(analysisStart.timeIntervalSince(triggeredAt) * 1000)
 
         let cachedSounds = soundCache.lookup(text: newText, language: language)
         if !cachedSounds.isEmpty {
             playMatchedSounds(cachedSounds, sourceText: newText)
+            let analysisMs = Int(Date().timeIntervalSince(analysisStart) * 1000)
+            appendLog(text: newText, method: .cache, waitMs: waitMs, analysisMs: analysisMs, soundIDs: cachedSounds)
             lastAnalyzedLength = targetLength
             return
         }
@@ -174,18 +184,38 @@ final class ReadingSessionViewModel: ObservableObject {
                 let matches = try await llmService.analyze(text: newText)
                 guard !Task.isCancelled else { return }
                 let soundIDs = matches.map(\.id)
+                let analysisMs = Int(Date().timeIntervalSince(analysisStart) * 1000)
                 playMatchedSounds(soundIDs, sourceText: newText)
                 soundCache.store(triggers: matches, language: language)
+                appendLog(text: newText, method: .llm, waitMs: waitMs, analysisMs: analysisMs, soundIDs: soundIDs)
                 lastAnalyzedLength = targetLength
             } catch {
                 guard !Task.isCancelled else { return }
                 let events = eventEngine.analyze(text: newText, language: language)
+                let soundIDs = events.map(\.soundID)
+                let analysisMs = Int(Date().timeIntervalSince(analysisStart) * 1000)
                 for event in events {
                     soundPlayer.play(event: event)
                     addRecentEffect(event)
                 }
+                appendLog(text: newText, method: soundIDs.isEmpty ? .noMatch : .keyword, waitMs: waitMs, analysisMs: analysisMs, soundIDs: soundIDs)
                 lastAnalyzedLength = targetLength
             }
+        }
+    }
+
+    private func appendLog(text: String, method: AnalysisLog.Method, waitMs: Int, analysisMs: Int, soundIDs: [String]) {
+        let log = AnalysisLog(
+            timestamp: Date(),
+            inputText: text,
+            method: method,
+            waitMs: waitMs,
+            analysisMs: analysisMs,
+            soundIDs: soundIDs
+        )
+        analysisLogs.insert(log, at: 0)
+        if analysisLogs.count > 50 {
+            analysisLogs = Array(analysisLogs.prefix(50))
         }
     }
 
