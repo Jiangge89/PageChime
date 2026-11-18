@@ -48,7 +48,7 @@ final class ReadingSessionViewModelTests: XCTestCase {
         let first = "Something made a strange noise up in the attic"
         let second = first + " after that everybody stayed silent for some time"
         llm.responder = { text in
-            text.contains("strange noise") ? [LLMSoundMatch(id: "owl_hoot", trigger: "strange noise")] : []
+            text.contains("strange noise") ? .sounds([LLMSoundMatch(id: "owl_hoot", trigger: "strange noise")]) : .none
         }
         llm.close()
 
@@ -64,7 +64,7 @@ final class ReadingSessionViewModelTests: XCTestCase {
     }
 
     func testLLMDoesNotReplaySoundAlreadyPlayedByKeywordPath() async throws {
-        llm.responder = { _ in [LLMSoundMatch(id: "frog_croak", trigger: "frog")] }
+        llm.responder = { _ in .sounds([LLMSoundMatch(id: "frog_croak", trigger: "frog")]) }
         llm.close()
 
         speech.send("The frog sat quietly by the pond all day")
@@ -81,8 +81,8 @@ final class ReadingSessionViewModelTests: XCTestCase {
 
     func testStaleLLMResultSkipsOneShotsButKeepsAmbience() async throws {
         llm.responder = { _ in
-            [LLMSoundMatch(id: "owl_hoot", trigger: "strange noise"),
-             LLMSoundMatch(id: "forest_ambience", trigger: "attic")]
+            .sounds([LLMSoundMatch(id: "owl_hoot", trigger: "strange noise"),
+                     LLMSoundMatch(id: "forest_ambience", trigger: "attic")])
         }
         llm.close()
 
@@ -103,6 +103,64 @@ final class ReadingSessionViewModelTests: XCTestCase {
 
         speech.send("Something made a strange noise up in the attic")
         try await waitUntil { self.viewModel.analysisLogs.contains { $0.method == .error } }
+    }
+
+    func testLLMSceneReplacesAmbienceAndPlaysOneShots() async throws {
+        llm.responder = { _ in
+            SoundAnalysis(
+                sounds: [LLMSoundMatch(id: "thunder", trigger: "strange noise")],
+                ambience: ["storm", "rain_light"]
+            )
+        }
+
+        speech.send("Something made a strange noise up in the attic")
+        try await waitUntil { self.viewModel.analysisLogs.contains { $0.method == .llm } }
+
+        XCTAssertEqual(player.sceneCalls.last, ["rain_light", "storm"])
+        XCTAssertTrue(player.playedIDs.contains("thunder"))
+    }
+
+    func testNullAmbienceKeepsCurrentScene() async throws {
+        llm.responder = { _ in .sounds([LLMSoundMatch(id: "owl_hoot", trigger: "strange noise")]) }
+
+        speech.send("Something made a strange noise up in the attic")
+        try await waitUntil { self.viewModel.analysisLogs.contains { $0.method == .llm } }
+
+        XCTAssertTrue(player.sceneCalls.isEmpty)
+    }
+
+    func testLLMReceivesEarlierStoryAsContext() async throws {
+        let first = "Something made a strange noise up in the attic"
+        let second = first + " after that everybody stayed silent for some time"
+
+        speech.send(first)
+        try await waitUntil { self.llm.contexts.count == 1 }
+        speech.send(second)
+        try await waitUntil { self.llm.contexts.count == 2 }
+
+        XCTAssertEqual(llm.contexts, ["", first])
+    }
+
+    func testCacheHitPlaysInstantlyAndStillAsksLLMForScene() async throws {
+        llm.responder = { text in
+            text.contains("strange noise") ? .sounds([LLMSoundMatch(id: "owl_hoot", trigger: "strange noise")]) : .none
+        }
+        let first = "Something made a strange noise up in the attic"
+        speech.send(first)
+        try await waitUntil { self.player.playedIDs.contains("owl_hoot") }
+
+        llm.close()
+        now = now.addingTimeInterval(5)
+        speech.send(first + " and later another strange noise came from the stairs")
+        try await waitUntil { self.viewModel.analysisLogs.contains { $0.method == .cache } }
+
+        XCTAssertEqual(player.playedIDs.filter { $0 == "owl_hoot" }.count, 2, "Cache should play without the LLM")
+        try await waitUntil { self.llm.calls.count == 2 }
+    }
+
+    func testSpeechActivityIsReportedForDucking() async throws {
+        speech.send("Once upon a time")
+        try await waitUntil { self.player.speechActivityCount > 0 }
     }
 
     // MARK: - Helpers
@@ -151,8 +209,12 @@ private final class FakeSpeech: SpeechRecognizing {
 
 private final class FakePlayer: SoundEffectPlaying {
     private(set) var playedIDs: [String] = []
+    private(set) var sceneCalls: [[String]] = []
+    private(set) var speechActivityCount = 0
 
     func play(event: StoryEvent) { playedIDs.append(event.soundID) }
+    func setAmbience(_ events: [StoryEvent]) { sceneCalls.append(events.map(\.soundID).sorted()) }
+    func noteSpeechActivity() { speechActivityCount += 1 }
     func stopAll() {}
     func setVolume(_: Float) {}
 }
@@ -161,13 +223,15 @@ private final class FakePlayer: SoundEffectPlaying {
 private final class FakeLLM: SoundMatching, @unchecked Sendable {
     private let lock = NSLock()
     private var recordedCalls: [String] = []
+    private var recordedContexts: [String] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var isOpen = true
 
-    var responder: (String) -> [LLMSoundMatch] = { _ in [] }
+    var responder: (String) -> SoundAnalysis = { _ in .none }
     var error: Error?
 
     var calls: [String] { lock.withLock { recordedCalls } }
+    var contexts: [String] { lock.withLock { recordedContexts } }
 
     func close() { lock.withLock { isOpen = false } }
 
@@ -180,8 +244,11 @@ private final class FakeLLM: SoundMatching, @unchecked Sendable {
         pending.forEach { $0.resume() }
     }
 
-    func analyze(text: String) async throws -> [LLMSoundMatch] {
-        lock.withLock { recordedCalls.append(text) }
+    func analyze(text: String, context: String) async throws -> SoundAnalysis {
+        lock.withLock {
+            recordedCalls.append(text)
+            recordedContexts.append(context)
+        }
         await withCheckedContinuation { continuation in
             let resumeNow = lock.withLock {
                 if isOpen { return true }
@@ -192,5 +259,12 @@ private final class FakeLLM: SoundMatching, @unchecked Sendable {
         }
         if let error { throw error }
         return responder(text)
+    }
+}
+
+private extension SoundAnalysis {
+    static let none = SoundAnalysis(sounds: [], ambience: nil)
+    static func sounds(_ matches: [LLMSoundMatch]) -> SoundAnalysis {
+        SoundAnalysis(sounds: matches, ambience: nil)
     }
 }

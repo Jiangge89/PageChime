@@ -5,6 +5,13 @@ struct LLMSoundMatch {
     let trigger: String
 }
 
+struct SoundAnalysis {
+    /// Sounds triggered by the new text.
+    let sounds: [LLMSoundMatch]
+    /// Ambience beds for the current scene, or nil if the scene is unchanged.
+    let ambience: [String]?
+}
+
 enum LLMError: Error {
     case noAPIKey
     case apiError(Int)
@@ -12,7 +19,10 @@ enum LLMError: Error {
 }
 
 protocol SoundMatching: AnyObject {
-    func analyze(text: String) async throws -> [LLMSoundMatch]
+    /// - Parameters:
+    ///   - text: Newly read text.
+    ///   - context: The story read just before it, for understanding the scene.
+    func analyze(text: String, context: String) async throws -> SoundAnalysis
 }
 
 final class LLMService: SoundMatching {
@@ -28,32 +38,43 @@ final class LLMService: SoundMatching {
         self.session = URLSession(configuration: config)
 
         self.systemPrompt = """
-        You are a children's story sound effect assistant. Given text from a story being read aloud, determine which sound effects should play.
+        You add sound effects, in real time, to a children's story that a parent is reading aloud. \
+        You receive the story read so far (context) and the newly read text.
 
-        Available sounds:
-        \(Self.soundCatalog)
+        One-shot sounds (play once when the new text describes them happening):
+        \(Self.catalog(ambience: false))
+
+        Ambience beds (looping background for the current setting):
+        \(Self.catalog(ambience: true))
+
+        Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null}
 
         Rules:
-        - Only return sounds directly related to what's happening in the text
-        - For negated events (e.g. "没有狗", "not a dog"), do NOT include that sound
-        - Return JSON: {"sounds": [{"id": "sound_id", "trigger": "shortest phrase from the text that identifies this sound"}]}
-        - "trigger" must be a short substring copied from the input text (not invented), just enough to unambiguously identify the sound
-        - If nothing matches, return {"sounds": []}
-        - At most 5 sounds per response
+        - "sounds": one-shots for things happening in the NEW text only, never for things only in the context. \
+        Skip negated events (e.g. "not a dog", "没有狗"). At most 4.
+        - "trigger": the shortest phrase copied verbatim from the new text that identifies the sound.
+        - "ambience": 0-3 ambience ids for where the story is at the end of the new text. Use the context to \
+        understand the setting, and keep the same set while the setting doesn't change. Return null if the new \
+        text says nothing about the setting. Return [] only if the story clearly moves somewhere quiet.
+        - Only use ids from the lists above.
         """
     }
 
-    func analyze(text: String) async throws -> [LLMSoundMatch] {
+    func analyze(text: String, context: String) async throws -> SoundAnalysis {
         guard !apiKey.isEmpty else { throw LLMError.noAPIKey }
+
+        let userContent = context.isEmpty
+            ? "New text: \(text)"
+            : "Story so far: \(context)\n\nNew text: \(text)"
 
         let body: [String: Any] = [
             "model": "gpt-4o-mini",
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": text],
+                ["role": "user", "content": userContent],
             ],
             "temperature": 0,
-            "max_tokens": 100,
+            "max_tokens": 150,
             "response_format": ["type": "json_object"],
         ]
 
@@ -70,10 +91,10 @@ final class LLMService: SoundMatching {
             throw LLMError.apiError(code)
         }
 
-        return try parseSoundMatches(from: data)
+        return try parseAnalysis(from: data)
     }
 
-    private func parseSoundMatches(from data: Data) throws -> [LLMSoundMatch] {
+    private func parseAnalysis(from data: Data) throws -> SoundAnalysis {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
@@ -84,13 +105,26 @@ final class LLMService: SoundMatching {
         else {
             throw LLMError.parseError
         }
-        return sounds.compactMap { dict in
+        let matches = sounds.compactMap { dict -> LLMSoundMatch? in
             guard let id = dict["id"], let trigger = dict["trigger"] else { return nil }
             return LLMSoundMatch(id: id, trigger: trigger)
         }
+        let ambience = (parsed["ambience"] as? [String])?.filter { Self.ambienceIDs.contains($0) }
+        return SoundAnalysis(sounds: matches, ambience: ambience)
     }
 
-    private static let soundCatalog: String = {
+    private static let ambienceIDs: Set<String> = Set(
+        TriggerLibrary.defaultTriggers.filter(\.isAmbience).map(\.soundID)
+    )
+
+    private static func catalog(ambience: Bool) -> String {
+        soundDescriptions
+            .filter { ambienceIDs.contains($0.0) == ambience }
+            .map { "- \($0.0): \($0.1)" }
+            .joined(separator: "\n")
+    }
+
+    private static let soundDescriptions: [(String, String)] = {
         let descriptions: [(String, String)] = [
             ("dog_bark", "dog barking"),
             ("cat_meow", "cat meowing"),
@@ -113,10 +147,10 @@ final class LLMService: SoundMatching {
             ("zebra_call", "zebra calling"),
             ("giraffe_hum", "giraffe humming"),
             ("mouse_squeak", "mouse squeaking"),
-            ("rain_light", "rain falling"),
+            ("rain_light", "rain falling, rainy weather"),
             ("thunder", "thunder rumbling"),
             ("wind", "wind blowing"),
-            ("storm", "thunderstorm"),
+            ("storm", "thunderstorm, heavy rain and wind"),
             ("door_knock", "knocking on door"),
             ("door_open", "door opening"),
             ("door_slam", "door slamming shut"),
@@ -151,6 +185,6 @@ final class LLMService: SoundMatching {
             ("farm_ambience", "farm atmosphere with animals"),
             ("wind_trees", "wind rustling through trees and leaves"),
         ]
-        return descriptions.map { "- \($0.0): \($0.1)" }.joined(separator: "\n")
+        return descriptions
     }()
 }

@@ -455,7 +455,7 @@ struct ContentView: View {
                 if let note = log.note {
                     Text(note)
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(log.method == .error ? .red : .orange)
                         .lineLimit(1)
                 }
 

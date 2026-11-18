@@ -27,8 +27,8 @@ final class StoryEventEngine {
             var matched = false
             for keyword in keywords {
                 let keyLower = keyword.lowercased()
-                if matchesKeyword(keyLower, in: lower, excludes: excludes) {
-                    if isNegated(keyword: keyLower, in: lower, language: language) {
+                if let range = firstMatch(of: keyLower, in: lower, excludes: excludes, language: language) {
+                    if isNegated(at: range, in: lower, language: language) {
                         continue
                     }
                     matched = true
@@ -66,9 +66,12 @@ final class StoryEventEngine {
 
     // MARK: - Keyword Matching
 
-    private func matchesKeyword(_ keyword: String, in text: String, excludes: [String]) -> Bool {
-        guard !excludes.isEmpty else { return text.contains(keyword) }
-
+    /// First occurrence of `keyword` that isn't inside an exclude pattern.
+    /// English keywords must start at a word boundary, so "then" doesn't
+    /// match "hen" and "attic" doesn't match "tic".
+    private func firstMatch(
+        of keyword: String, in text: String, excludes: [String], language: ReadingLanguage
+    ) -> Range<String.Index>? {
         var excludedRanges: [Range<String.Index>] = []
         for exclude in excludes {
             var searchStart = text.startIndex
@@ -85,17 +88,22 @@ final class StoryEventEngine {
             let isExcluded = excludedRanges.contains { excludeRange in
                 range.lowerBound >= excludeRange.lowerBound && range.upperBound <= excludeRange.upperBound
             }
-            if !isExcluded { return true }
-            searchStart = range.upperBound
+            if !isExcluded, language != .english || startsWord(range, in: text) {
+                return range
+            }
+            searchStart = text.index(after: range.lowerBound)
         }
-        return false
+        return nil
+    }
+
+    private func startsWord(_ range: Range<String.Index>, in text: String) -> Bool {
+        guard range.lowerBound > text.startIndex else { return true }
+        return !text[text.index(before: range.lowerBound)].isLetter
     }
 
     // MARK: - Negation Detection
 
-    private func isNegated(keyword: String, in text: String, language: ReadingLanguage) -> Bool {
-        guard let keyRange = text.range(of: keyword) else { return false }
-
+    private func isNegated(at keyRange: Range<String.Index>, in text: String, language: ReadingLanguage) -> Bool {
         switch language {
         case .english:
             let negations = ["not ", " not", "n't ", "never ", "without ", "no "]

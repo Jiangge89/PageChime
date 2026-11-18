@@ -226,6 +226,16 @@ final class StoryEventEngineTests: XCTestCase {
         XCTAssertTrue(events.isEmpty, "Unrelated text should not trigger any events")
     }
 
+    func testEnglishKeywordMustStartAWord() {
+        let events = engine.analyze(text: "And then everyone went up to the attic.", language: .english)
+        XCTAssertFalse(events.contains { $0.soundID == "chicken_cluck" }, "\"then\" must not match \"hen\"")
+    }
+
+    func testEnglishKeywordMatchesWithSuffix() {
+        let events = engine.analyze(text: "The hens were clucking.", language: .english)
+        XCTAssertTrue(events.contains { $0.soundID == "chicken_cluck" })
+    }
+
     func testNoTriggerForChineseUnrelatedText() {
         let events = engine.analyze(text: "小朋友吃了早饭。", language: .chinese)
         XCTAssertTrue(events.isEmpty, "Unrelated Chinese text should not trigger")

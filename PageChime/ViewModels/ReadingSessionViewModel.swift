@@ -31,12 +31,16 @@ final class ReadingSessionViewModel: ObservableObject {
     /// Transcript position at which each sound last played, so a late LLM
     /// result doesn't replay a sound the keyword path already covered.
     private var lastPlayedPosition: [String: Int] = [:]
+    /// Ambience beds the LLM last chose for the scene.
+    private var currentScene: Set<String> = []
 
     private let cooldownInterval: TimeInterval = 3
     /// One-shot sounds from an LLM result older than this are dropped:
     /// by then the reader has moved on. Ambience is still applied.
     private let staleResultThreshold: TimeInterval = 4
     private let segmentDebounce: TimeInterval = 0.6
+    /// Characters of earlier story sent along with each segment.
+    private let contextLength = 300
 
     private static let triggerLookup: [String: TriggerEntry] = {
         Dictionary(uniqueKeysWithValues: TriggerLibrary.defaultTriggers.map { ($0.soundID, $0) })
@@ -122,6 +126,7 @@ final class ReadingSessionViewModel: ObservableObject {
         soundCache.flush()
         cooldowns.removeAll()
         lastPlayedPosition.removeAll()
+        currentScene.removeAll()
         transcript = ""
         recentEffects = []
         keywordScannedLength = 0
@@ -153,6 +158,7 @@ final class ReadingSessionViewModel: ObservableObject {
 
     private func onTranscriptUpdated(_ newTranscript: String) {
         transcript = newTranscript
+        soundPlayer.noteSpeechActivity()
 
         // Partial results can be revised shorter; never point past the end.
         keywordScannedLength = min(keywordScannedLength, newTranscript.count)
@@ -172,8 +178,12 @@ final class ReadingSessionViewModel: ObservableObject {
         // Re-scan a short tail so keywords and negations split across
         // updates are still seen; cooldowns prevent double playback.
         let overlap = language == .chinese ? 10 : 24
-        let start = max(0, keywordScannedLength - overlap)
-        let window = String(text.dropFirst(start))
+        var start = text.index(text.startIndex, offsetBy: max(0, keywordScannedLength - overlap))
+        // Don't start mid-word, or "then" could be scanned as "hen".
+        while start > text.startIndex, text[text.index(before: start)].isLetter {
+            start = text.index(before: start)
+        }
+        let window = String(text[start...])
         keywordScannedLength = text.count
 
         let analysisStart = currentTime()
@@ -213,9 +223,10 @@ final class ReadingSessionViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + segmentDebounce, execute: workItem)
     }
 
-    /// Hands the not-yet-analyzed tail of the transcript to the cache, or to
-    /// the LLM on a cache miss. Requests run concurrently and are never
-    /// cancelled by newer speech, so continuous reading can't starve them.
+    /// Hands the not-yet-analyzed tail of the transcript to the cache and the
+    /// LLM. Cache hits play instantly; the LLM still runs to follow the scene.
+    /// Requests run concurrently and are never cancelled by newer speech, so
+    /// continuous reading can't starve them.
     private func dispatchSegment(_ text: String, triggeredAt: Date) {
         guard text.count > dispatchedLength else { return }
 
@@ -226,6 +237,7 @@ final class ReadingSessionViewModel: ObservableObject {
         let analysisStart = currentTime()
         let waitMs = Int(analysisStart.timeIntervalSince(triggeredAt) * 1000)
         let segmentLanguage = language
+        let context = String(text.prefix(segmentStart).suffix(contextLength))
 
         let cachedSounds = soundCache.lookup(text: segment, language: segmentLanguage)
         if !cachedSounds.isEmpty {
@@ -234,16 +246,15 @@ final class ReadingSessionViewModel: ObservableObject {
             }
             let analysisMs = Int(currentTime().timeIntervalSince(analysisStart) * 1000)
             appendLog(text: segment, method: .cache, waitMs: waitMs, analysisMs: analysisMs, soundIDs: played)
-            return
         }
 
         let taskID = UUID()
         let capturedSession = sessionID
         let llm = llmService
         llmTasks[taskID] = Task { [weak self] in
-            let result: Result<[LLMSoundMatch], Error>
+            let result: Result<SoundAnalysis, Error>
             do {
-                result = .success(try await llm.analyze(text: segment))
+                result = .success(try await llm.analyze(text: segment, context: context))
             } catch {
                 result = .failure(error)
             }
@@ -258,41 +269,68 @@ final class ReadingSessionViewModel: ObservableObject {
     }
 
     private func handleLLMResult(
-        _ result: Result<[LLMSoundMatch], Error>,
+        _ result: Result<SoundAnalysis, Error>,
         segment: String, segmentStart: Int, position: Int,
         language: ReadingLanguage, waitMs: Int, analysisStart: Date
     ) {
         let elapsed = currentTime().timeIntervalSince(analysisStart)
         let analysisMs = Int(elapsed * 1000)
 
-        switch result {
-        case .failure(let error):
-            appendLog(
-                text: segment, method: .error, waitMs: waitMs, analysisMs: analysisMs,
-                soundIDs: [], note: String(describing: error)
-            )
-
-        case .success(let matches):
-            soundCache.store(triggers: matches, language: language)
-
-            let isStale = elapsed > staleResultThreshold
-            var played: [String] = []
-            var dropped: [String] = []
-            for soundID in matches.map(\.id) {
-                let isAmbience = Self.triggerLookup[soundID]?.isAmbience ?? false
-                if isStale && !isAmbience {
-                    dropped.append(soundID)
-                } else if playAnalyzedSound(soundID, segment: segment, segmentStart: segmentStart, position: position) {
-                    played.append(soundID)
-                }
+        guard case .success(let analysis) = result else {
+            if case .failure(let error) = result {
+                appendLog(
+                    text: segment, method: .error, waitMs: waitMs, analysisMs: analysisMs,
+                    soundIDs: [], note: String(describing: error)
+                )
             }
-
-            appendLog(
-                text: segment, method: matches.isEmpty ? .noMatch : .llm,
-                waitMs: waitMs, analysisMs: analysisMs, soundIDs: played,
-                note: dropped.isEmpty ? nil : "late, skipped: " + dropped.joined(separator: ", ")
-            )
+            return
         }
+
+        let isAmbience = { (id: String) in Self.triggerLookup[id]?.isAmbience ?? false }
+        let oneShots = analysis.sounds.filter { !isAmbience($0.id) }
+        let inlineAmbience = analysis.sounds.map(\.id).filter(isAmbience)
+        soundCache.store(triggers: oneShots, language: language)
+
+        // Late one-shots would no longer match what is being read.
+        let isStale = elapsed > staleResultThreshold
+        var played: [String] = []
+        var dropped: [String] = []
+        for soundID in oneShots.map(\.id) {
+            if isStale {
+                dropped.append(soundID)
+            } else if playAnalyzedSound(soundID, segment: segment, segmentStart: segmentStart, position: position) {
+                played.append(soundID)
+            }
+        }
+
+        // Ambience follows the scene, so it's applied even when late.
+        var notes: [String] = []
+        if let sceneAmbience = analysis.ambience {
+            let scene = Set(sceneAmbience + inlineAmbience)
+            applyScene(scene, sourceText: segment)
+            notes.append("scene: " + (scene.isEmpty ? "quiet" : scene.sorted().joined(separator: ", ")))
+        } else {
+            played += inlineAmbience.filter { playSound($0, sourceText: segment, position: position) }
+        }
+        if !dropped.isEmpty {
+            notes.append("late, skipped: " + dropped.joined(separator: ", "))
+        }
+
+        let foundAnything = !analysis.sounds.isEmpty || analysis.ambience != nil
+        appendLog(
+            text: segment, method: foundAnything ? .llm : .noMatch,
+            waitMs: waitMs, analysisMs: analysisMs, soundIDs: played,
+            note: notes.isEmpty ? nil : notes.joined(separator: " · ")
+        )
+    }
+
+    private func applyScene(_ soundIDs: Set<String>, sourceText: String) {
+        let events = soundIDs.sorted().compactMap { makeEvent($0, sourceText: sourceText) }
+        soundPlayer.setAmbience(events)
+        for event in events where !currentScene.contains(event.soundID) {
+            addRecentEffect(event)
+        }
+        currentScene = soundIDs
     }
 
     /// Plays a sound found by cache/LLM unless the keyword path already
@@ -312,9 +350,18 @@ final class ReadingSessionViewModel: ObservableObject {
         if let lastFired = cooldowns[soundID], now.timeIntervalSince(lastFired) < cooldownInterval {
             return false
         }
-        guard let trigger = Self.triggerLookup[soundID] else { return false }
+        guard let event = makeEvent(soundID, sourceText: sourceText) else { return false }
 
-        let event = StoryEvent(
+        soundPlayer.play(event: event)
+        addRecentEffect(event)
+        cooldowns[soundID] = now
+        lastPlayedPosition[soundID] = position
+        return true
+    }
+
+    private func makeEvent(_ soundID: String, sourceText: String) -> StoryEvent? {
+        guard let trigger = Self.triggerLookup[soundID] else { return nil }
+        return StoryEvent(
             id: UUID(),
             type: trigger.eventType,
             entity: trigger.entity,
@@ -324,12 +371,6 @@ final class ReadingSessionViewModel: ObservableObject {
             cooldownSeconds: cooldownInterval,
             sourceText: sourceText
         )
-
-        soundPlayer.play(event: event)
-        addRecentEffect(event)
-        cooldowns[soundID] = now
-        lastPlayedPosition[soundID] = position
-        return true
     }
 
     private func appendLog(

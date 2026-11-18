@@ -6,11 +6,12 @@ PageChime enhances parent-child reading by listening to a parent's narration and
 
 - Native iOS 17+ app built with Swift and SwiftUI
 - Live speech recognition (English and Simplified Chinese)
-- Three-tier analysis of newly spoken text: **local cache → OpenAI LLM → local keyword fallback**
+- Two-speed analysis: an **instant local keyword path** on every partial transcript, plus a **scene-aware LLM** (with a learned phrase cache) for sounds keywords miss and for the scene's ambience
 - 58 bilingual sound effects across animals, weather, vehicles, machines, actions, and environments
-- Proximity-based negation detection in the keyword fallback (e.g. "There was no frog" / "没有青蛙" → no sound)
+- Layered ambience: up to 3 looping beds (e.g. storm + rain) that crossfade with the scene, hold while it lasts, and duck under the reader's voice
+- One-shot variation: slight random pitch and level on every play, and overlapping playback
+- Proximity-based negation detection in the keyword path (e.g. "There was no frog" / "没有青蛙" → no sound); English keywords must start a word ("then" ≠ "hen")
 - Unified 3-second per-sound cooldown to suppress repeats
-- No limit on how many different sounds one analysis pass can trigger
 - Bilingual UI that follows the selected reading language
 - In-app debug panel showing each analysis: input text, method (Cache / LLM / Keyword / No Match), wait and analysis latency, and matched sounds
 
@@ -25,8 +26,8 @@ PageChime enhances parent-child reading by listening to a parent's narration and
                │
 ┌──────────────▼─────────────────┐
 │    ReadingSessionViewModel     │
-│  debounce · cache → LLM →      │
-│  keyword fallback · cooldowns  │
+│  instant keywords · cache +    │
+│  scene LLM · cooldowns         │
 └──┬────────┬────────┬────────┬──┘
    │        │        │        │
 ┌──▼───┐ ┌──▼───┐ ┌──▼───┐ ┌──▼─────────┐
@@ -37,7 +38,7 @@ PageChime enhances parent-child reading by listening to a parent's narration and
           ┌──────────────┐   ┌──────────────┐
           │ StoryEvent   │──►│TriggerLibrary│
           │ Engine       │   └──────────────┘
-          │ (fallback)   │
+          │ (instant)    │
           └──────────────┘
 ```
 
@@ -45,22 +46,22 @@ PageChime enhances parent-child reading by listening to a parent's narration and
 |-----------|---------------|
 | `SpeechRecognizerService` | Microphone capture, live speech-to-text via Apple Speech framework, auto-restart on timeouts and interruptions |
 | `SoundCache` | Persistent phrase → sound cache learned from LLM results; per-language buckets, up to 5,000 entries each, LRU eviction |
-| `LLMService` | Calls OpenAI Chat Completions (`gpt-4o-mini`) with a fixed sound catalog; returns matched sound IDs plus trigger phrases |
-| `StoryEventEngine` | Offline keyword matching with exclude patterns, proximity negation, and cooldowns |
+| `LLMService` | Calls OpenAI Chat Completions (`gpt-4o-mini`) with recent story context; returns one-shot sounds with trigger phrases, plus the ambience set for the current scene |
+| `StoryEventEngine` | Offline keyword matching with exclude patterns, word-start matching, proximity negation, and cooldowns |
 | `TriggerLibrary` | Bilingual keyword-to-sound mappings (English + Chinese); also supplies Speech contextual strings |
-| `SoundEffectPlayer` | AVAudioPlayer-based playback, volume control, ambience looping and fade-out |
-| `ReadingSessionViewModel` | Coordinates services, debounces analysis, owns transient UI state and the debug log |
+| `SoundEffectPlayer` | AVAudioEngine mixer: pooled one-shot voices with random pitch/level, up to 3 crossfading ambience beds, ducking under speech; sounds are pre-decoded into memory |
+| `ReadingSessionViewModel` | Runs the instant keyword path, dispatches cache/LLM segments, applies scenes, owns transient UI state and the debug log |
 | `ContentView` | SwiftUI interface with calm children's-book visual style |
 
 Speech and playback are injected via protocols (`SpeechRecognizing`, `SoundEffectPlaying`) for testability.
 
 ## How Analysis Works
 
-1. The transcript is debounced: analysis runs 0.8s after the last update, or immediately once enough new text has accumulated (12 characters for Chinese, 40 for English).
-2. Only text that hasn't been analyzed yet is processed.
-3. **Cache** (`SoundCache`): the new text is normalized (punctuation and whitespace stripped, lowercased for English) and checked against previously learned trigger phrases. A hit plays sounds instantly with no network call.
-4. **LLM** (`LLMService`): on a cache miss, the text is sent to OpenAI `gpt-4o-mini` (JSON mode, 5s timeout). The model returns sound IDs plus the short trigger phrase from the text; those phrases are stored in the cache for next time.
-5. **Keyword fallback** (`StoryEventEngine`): if the LLM call fails (no key, network error, timeout, parse error), the local keyword engine is used instead.
+1. **Instant keyword path** (`StoryEventEngine`): every partial transcript is scanned locally, so obvious sounds ("frog", "thunder", "knock") play with no network wait.
+2. **Segments**: unanalyzed text is handed on after a 0.6s pause, or as soon as 10 (Chinese) / 30 (English) new characters arrive.
+3. **Cache** (`SoundCache`): each segment is normalized and checked against trigger phrases learned from earlier LLM results; hits play instantly.
+4. **Scene LLM** (`LLMService`): every segment is also sent to `gpt-4o-mini` with the previous ~300 characters as context. It returns one-shot sounds for the new text and the ambience beds for the current scene (or `null` to keep the scene). Requests run concurrently and are never cancelled by newer speech.
+5. **Merging**: LLM one-shots already played by the keyword path for that text are skipped; one-shots arriving more than 4s late are dropped; ambience is always applied, since it follows the scene rather than a single word.
 
 ## Privacy Design
 
@@ -150,10 +151,11 @@ Add a case to `ReadingLanguage`, keyword arrays for it in each trigger entry's `
 
 ## Known Limitations
 
-- **Network latency.** Cache misses wait on an OpenAI round-trip (up to the 5s timeout) before sounds play. The debug panel shows actual latency.
+- **Network latency for non-keyword sounds.** Sounds only the LLM recognizes wait on an OpenAI round-trip; one-shots later than 4s are dropped. The debug panel shows actual latency.
 - **Cache matching is substring-based.** A learned phrase matches whenever it appears inside new text, regardless of context.
-- **Keyword fallback is substring matching.** Phrases like "frogman" would match "frog". Exclude patterns cover some Chinese cases (e.g. 牛奶 is not a cow).
-- **Fallback negation only looks before the keyword.** The keyword engine checks ~15 characters (English) or 5 characters (Chinese) before a keyword. "There was no frog" is suppressed, but "The frog did not croak" still triggers. This is deliberate: Chinese recognition produces no punctuation, so sentence-level negation would suppress every keyword in the transcript.
+- **Keyword matching is prefix-based.** English keywords must start a word, but "frogman" still matches "frog". Exclude patterns cover some Chinese cases (e.g. 牛奶 is not a cow).
+- **Short, single-variant sounds.** Each sound has one file and ambience loops are ~6s, so loops are audible on long scenes. Random pitch/level helps one-shots but doesn't replace real variants.
+- **Keyword negation only looks before the keyword.** The keyword engine checks ~15 characters (English) or 5 characters (Chinese) before a keyword. "There was no frog" is suppressed, but "The frog did not croak" still triggers. This is deliberate: Chinese recognition produces no punctuation, so sentence-level negation would suppress every keyword in the transcript.
 - **No question handling.** Questions like "What sound does a frog make?" trigger immediately, without delay.
 - **No background listening.** The app works in the foreground only. Screen sleep is disabled during active sessions.
 - **Apple Speech recognition limits.** Recognition tasks may time out after ~60 seconds; the app auto-restarts them. Network-based recognition may be used when on-device is unavailable.
