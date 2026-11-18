@@ -11,7 +11,11 @@ enum LLMError: Error {
     case parseError
 }
 
-final class LLMService {
+protocol SoundMatching: AnyObject {
+    func analyze(text: String) async throws -> [LLMSoundMatch]
+}
+
+final class LLMService: SoundMatching {
     private let apiKey: String
     private let systemPrompt: String
     private let session: URLSession

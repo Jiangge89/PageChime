@@ -10,10 +10,14 @@ final class SoundCache {
     private var buckets: [String: [CacheEntry]] = [:]
     private let fileURL: URL
     private let maxEntriesPerLanguage = 5_000
+    private let saveDelay: TimeInterval = 2
+    private let ioQueue = DispatchQueue(label: "com.pagechime.soundcache.io", qos: .utility)
+    private var pendingSave: DispatchWorkItem?
 
-    init() {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        fileURL = docs.appendingPathComponent("sound_cache.json")
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL ?? FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("sound_cache.json")
         load()
     }
 
@@ -42,7 +46,7 @@ final class SoundCache {
 
         if touched {
             buckets[key] = bucket
-            save()
+            scheduleSave()
         }
         return matchedSounds
     }
@@ -74,13 +78,13 @@ final class SoundCache {
                 bucket = Array(bucket.prefix(maxEntriesPerLanguage))
             }
             buckets[key] = bucket
-            save()
+            scheduleSave()
         }
     }
 
     func reset() {
         buckets.removeAll()
-        save()
+        flush()
     }
 
     var count: Int { buckets.values.reduce(0) { $0 + $1.count } }
@@ -105,8 +109,27 @@ final class SoundCache {
         buckets = decoded
     }
 
-    private func save() {
-        guard let data = try? JSONEncoder().encode(buckets) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+    /// Coalesces writes: usage timestamps change on every hit, so saving
+    /// immediately would encode and write the whole cache on the main thread.
+    private func scheduleSave() {
+        guard pendingSave == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingSave = nil
+            self?.flush()
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + saveDelay, execute: work)
+    }
+
+    /// Writes the current state in the background.
+    func flush() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        let snapshot = buckets
+        let url = fileURL
+        ioQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 }

@@ -452,6 +452,13 @@ struct ContentView: View {
                         .lineLimit(1)
                 }
 
+                if let note = log.note {
+                    Text(note)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+
                 Text(log.inputText.prefix(40) + (log.inputText.count > 40 ? "..." : ""))
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
@@ -470,6 +477,7 @@ struct ContentView: View {
         case .llm: return .orange
         case .keyword: return .blue
         case .noMatch: return .gray
+        case .error: return .red
         }
     }
 }

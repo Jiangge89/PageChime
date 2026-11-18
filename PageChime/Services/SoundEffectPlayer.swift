@@ -5,62 +5,55 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
     private var players: [String: AVAudioPlayer] = [:]
     private var ambiencePlayer: AVAudioPlayer?
     private var currentAmbienceSoundID: String?
-    private var volume: Float = 0.4
-    private var pendingWorkItems: [DispatchWorkItem] = []
+    private var currentAmbienceIntensity: EffectIntensity = .soft
+    private var fadingPlayers: [AVAudioPlayer] = []
     private var ambienceFadeOutItem: DispatchWorkItem?
+    private var volume: Float = 0.4
 
-    private let ambienceSounds: Set<String> = [
-        "rain_light", "wind", "storm",
-        "forest_ambience", "ocean_waves", "night_ambience", "farm_ambience",
-        "wind_trees",
-    ]
+    private let audioData = AudioDataCache()
 
-    private let ambienceDuration: TimeInterval = 5
-    private let fadeDuration: TimeInterval = 2
+    private let ambienceSounds: Set<String> = Set(
+        TriggerLibrary.defaultTriggers.filter(\.isAmbience).map(\.soundID)
+    )
+
+    /// How long an ambience bed keeps playing after its last mention.
+    private let ambienceHoldDuration: TimeInterval = 20
+    private let fadeInDuration: TimeInterval = 1.5
+    private let fadeOutDuration: TimeInterval = 2
 
     func play(event: StoryEvent) {
         let isAmbience = ambienceSounds.contains(event.soundID)
 
-        if let existing = players[event.soundID], existing.isPlaying {
-            if isAmbience { scheduleAmbienceFadeOut() }
+        if isAmbience, currentAmbienceSoundID == event.soundID {
+            // Mentioned again: keep the bed going instead of restarting it.
+            scheduleAmbienceFadeOut()
+            return
+        }
+        if !isAmbience, let existing = players[event.soundID], existing.isPlaying {
             return
         }
 
-        guard let url = soundURL(for: event.soundID) else { return }
+        guard let data = audioData.data(for: event.soundID),
+              let player = try? AVAudioPlayer(data: data) else { return }
+        player.delegate = self
+        player.prepareToPlay()
 
-        do {
-            let player = try AVAudioPlayer(contentsOf: url)
+        if isAmbience {
+            startAmbience(player, soundID: event.soundID, intensity: event.intensity)
+        } else {
             player.volume = volume * intensityMultiplier(event.intensity)
-            player.delegate = self
-            player.prepareToPlay()
-
-            if event.delayMilliseconds > 0 {
-                let delay = Double(event.delayMilliseconds) / 1000.0
-                let soundID = event.soundID
-                let workItem = DispatchWorkItem { [weak self] in
-                    self?.startPlaying(player: player, soundID: soundID, isAmbience: isAmbience)
-                }
-                pendingWorkItems.append(workItem)
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-            } else {
-                startPlaying(player: player, soundID: event.soundID, isAmbience: isAmbience)
-            }
-        } catch {
-            // Missing or corrupt sound file
+            player.play()
+            players[event.soundID] = player
         }
     }
 
     func stopAll() {
-        for item in pendingWorkItems {
-            item.cancel()
-        }
-        pendingWorkItems.removeAll()
         ambienceFadeOutItem?.cancel()
         ambienceFadeOutItem = nil
-        for (_, player) in players {
-            player.stop()
-        }
+        players.values.forEach { $0.stop() }
         players.removeAll()
+        fadingPlayers.forEach { $0.stop() }
+        fadingPlayers.removeAll()
         ambiencePlayer?.stop()
         ambiencePlayer = nil
         currentAmbienceSoundID = nil
@@ -68,12 +61,10 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
 
     func setVolume(_ newVolume: Float) {
         volume = newVolume
-        for (soundID, player) in players where player.isPlaying {
-            let isAmbience = ambienceSounds.contains(soundID)
-            let intensity: EffectIntensity = isAmbience ? .soft : .normal
-            player.volume = newVolume * intensityMultiplier(intensity)
+        for player in players.values where player.isPlaying {
+            player.volume = newVolume * intensityMultiplier(.normal)
         }
-        ambiencePlayer?.volume = newVolume * intensityMultiplier(.soft)
+        ambiencePlayer?.volume = newVolume * intensityMultiplier(currentAmbienceIntensity)
     }
 
     // MARK: - AVAudioPlayerDelegate
@@ -82,62 +73,43 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
         players = players.filter { $0.value !== player }
     }
 
-    // MARK: - Private
+    // MARK: - Ambience
 
-    private func startPlaying(player: AVAudioPlayer, soundID: String, isAmbience: Bool) {
-        if isAmbience {
-            if currentAmbienceSoundID == soundID { return }
-            ambiencePlayer?.stop()
-            ambienceFadeOutItem?.cancel()
-            player.numberOfLoops = -1
-            ambiencePlayer = player
-            currentAmbienceSoundID = soundID
-            scheduleAmbienceFadeOut()
+    private func startAmbience(_ player: AVAudioPlayer, soundID: String, intensity: EffectIntensity) {
+        if let previous = ambiencePlayer {
+            fadeOutAndStop(previous)
         }
 
+        player.numberOfLoops = -1
+        player.volume = 0
         player.play()
-        players[soundID] = player
+        player.setVolume(volume * intensityMultiplier(intensity), fadeDuration: fadeInDuration)
+
+        ambiencePlayer = player
+        currentAmbienceSoundID = soundID
+        currentAmbienceIntensity = intensity
+        scheduleAmbienceFadeOut()
     }
 
     private func scheduleAmbienceFadeOut() {
         ambienceFadeOutItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
-            self?.fadeOutAmbience()
+            guard let self, let player = self.ambiencePlayer else { return }
+            self.ambiencePlayer = nil
+            self.currentAmbienceSoundID = nil
+            self.fadeOutAndStop(player)
         }
         ambienceFadeOutItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + ambienceDuration, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + ambienceHoldDuration, execute: workItem)
     }
 
-    private func fadeOutAmbience() {
-        guard let player = ambiencePlayer else { return }
-        let steps = 10
-        let interval = fadeDuration / Double(steps)
-        let volumeStep = player.volume / Float(steps)
-
-        for i in 1...steps {
-            DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(i)) { [weak self] in
-                guard let self else { return }
-                if i < steps {
-                    player.volume = max(0, player.volume - volumeStep)
-                } else {
-                    player.stop()
-                    if self.ambiencePlayer === player {
-                        self.ambiencePlayer = nil
-                        if let sid = self.currentAmbienceSoundID {
-                            self.players.removeValue(forKey: sid)
-                        }
-                        self.currentAmbienceSoundID = nil
-                    }
-                }
-            }
+    private func fadeOutAndStop(_ player: AVAudioPlayer) {
+        fadingPlayers.append(player)
+        player.setVolume(0, fadeDuration: fadeOutDuration)
+        DispatchQueue.main.asyncAfter(deadline: .now() + fadeOutDuration) { [weak self] in
+            player.stop()
+            self?.fadingPlayers.removeAll { $0 === player }
         }
-    }
-
-    private func soundURL(for soundID: String) -> URL? {
-        if let url = Bundle.main.url(forResource: soundID, withExtension: "wav", subdirectory: "Sounds") {
-            return url
-        }
-        return Bundle.main.url(forResource: soundID, withExtension: "wav")
     }
 
     private func intensityMultiplier(_ intensity: EffectIntensity) -> Float {
@@ -146,5 +118,43 @@ final class SoundEffectPlayer: NSObject, SoundEffectPlaying, AVAudioPlayerDelega
         case .normal: return 1.0
         case .strong: return 1.3
         }
+    }
+}
+
+/// Keeps bundled sound files in memory so playback never touches the disk.
+final class AudioDataCache {
+    private var storage: [String: Data] = [:]
+    private let lock = NSLock()
+
+    init(preload: Bool = true) {
+        guard preload else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.preloadAll()
+        }
+    }
+
+    func data(for soundID: String) -> Data? {
+        if let cached = lock.withLock({ storage[soundID] }) {
+            return cached
+        }
+        guard let url = Self.url(for: soundID), let data = try? Data(contentsOf: url) else { return nil }
+        lock.withLock { storage[soundID] = data }
+        return data
+    }
+
+    private func preloadAll() {
+        let urls = (Bundle.main.urls(forResourcesWithExtension: "wav", subdirectory: "Sounds") ?? [])
+            + (Bundle.main.urls(forResourcesWithExtension: "wav", subdirectory: nil) ?? [])
+        for url in urls {
+            let soundID = url.deletingPathExtension().lastPathComponent
+            guard lock.withLock({ storage[soundID] }) == nil,
+                  let data = try? Data(contentsOf: url) else { continue }
+            lock.withLock { storage[soundID] = data }
+        }
+    }
+
+    private static func url(for soundID: String) -> URL? {
+        Bundle.main.url(forResource: soundID, withExtension: "wav", subdirectory: "Sounds")
+            ?? Bundle.main.url(forResource: soundID, withExtension: "wav")
     }
 }

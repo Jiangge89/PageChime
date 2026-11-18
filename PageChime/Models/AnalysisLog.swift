@@ -8,6 +8,7 @@ struct AnalysisLog: Identifiable {
     let waitMs: Int
     let analysisMs: Int
     let soundIDs: [String]
+    var note: String? = nil
 
     var totalMs: Int { waitMs + analysisMs }
 
@@ -16,5 +17,6 @@ struct AnalysisLog: Identifiable {
         case llm = "LLM"
         case keyword = "Keyword"
         case noMatch = "No Match"
+        case error = "Error"
     }
 }
