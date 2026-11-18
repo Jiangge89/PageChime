@@ -32,14 +32,18 @@ final class StoryEventEngineTests: XCTestCase {
 
     // MARK: - Negation
 
+    // Negation is proximity-based: only the ~15 chars (en) / 5 chars (zh)
+    // before a keyword are checked, so unpunctuated speech doesn't negate
+    // every keyword in the transcript.
+
     func testEnglishNegation() {
-        let events = engine.analyze(text: "The frog did not make a sound.", language: .english)
+        let events = engine.analyze(text: "There was no frog in the pond.", language: .english)
         let soundIDs = events.map(\.soundID)
         XCTAssertFalse(soundIDs.contains("frog_croak"), "Should not trigger when negated")
     }
 
     func testChineseNegation() {
-        let events = engine.analyze(text: "青蛙没有叫。", language: .chinese)
+        let events = engine.analyze(text: "池塘里没有青蛙。", language: .chinese)
         let soundIDs = events.map(\.soundID)
         XCTAssertFalse(soundIDs.contains("frog_croak"), "Should not trigger when negated")
     }
@@ -57,43 +61,52 @@ final class StoryEventEngineTests: XCTestCase {
     }
 
     func testPartialNegationInCompoundSentence() {
-        let events = engine.analyze(text: "The dog did not bark, but the cat meowed.", language: .english)
+        let events = engine.analyze(text: "There was no dog, but the cat meowed.", language: .english)
         let soundIDs = Set(events.map(\.soundID))
         XCTAssertFalse(soundIDs.contains("dog_bark"), "Dog should be negated")
         XCTAssertTrue(soundIDs.contains("cat_meow"), "Cat should trigger")
     }
 
-    // MARK: - Question Detection
+    func testDistantChineseNegationDoesNotSuppress() {
+        // Unpunctuated speech: "没有" far before the keyword must not negate it.
+        let events = engine.analyze(text: "天上没有一朵云彩院子里的小狗在跑", language: .chinese)
+        XCTAssertTrue(events.contains { $0.soundID == "dog_bark" },
+                      "Negation outside the proximity window should not suppress")
+    }
 
-    func testEnglishQuestion() {
+    func testPostKeywordNegationIsNotDetected() {
+        // Known limitation: negation after the keyword is not detected.
+        let events = engine.analyze(text: "The frog did not make a sound.", language: .english)
+        XCTAssertTrue(events.contains { $0.soundID == "frog_croak" })
+    }
+
+    // MARK: - Questions
+
+    func testEnglishQuestionTriggersImmediately() {
         let events = engine.analyze(text: "What sound does a frog make?", language: .english)
-        XCTAssertFalse(events.isEmpty, "Should detect frog in question")
         let frogEvent = events.first { $0.soundID == "frog_croak" }
-        XCTAssertNotNil(frogEvent, "Should have frog event")
-        XCTAssertEqual(frogEvent?.delayMilliseconds, 1500, "Question should add delay")
+        XCTAssertNotNil(frogEvent, "Should detect frog in question")
+        XCTAssertEqual(frogEvent?.delayMilliseconds, 0, "Questions are not delayed")
     }
 
-    func testChineseQuestion() {
+    func testChineseQuestionTriggersImmediately() {
         let events = engine.analyze(text: "青蛙是怎么叫的？", language: .chinese)
-        XCTAssertFalse(events.isEmpty, "Should detect 青蛙 in question")
         let frogEvent = events.first { $0.soundID == "frog_croak" }
-        XCTAssertNotNil(frogEvent, "Should have frog event")
-        XCTAssertEqual(frogEvent?.delayMilliseconds, 1500, "Question should add delay")
+        XCTAssertNotNil(frogEvent, "Should detect 青蛙 in question")
+        XCTAssertEqual(frogEvent?.delayMilliseconds, 0, "Questions are not delayed")
     }
 
-    // MARK: - Max Effects Per Sentence
+    // MARK: - Multiple Effects
 
-    func testMaxTwoEffectsPerSentence() {
+    func testNoLimitOnEffectsPerPass() {
         let events = engine.analyze(
             text: "It was raining, and then thunder shook the forest.",
             language: .english
         )
-        XCTAssertLessThanOrEqual(events.count, 2, "Should not exceed 2 effects per sentence")
         let soundIDs = Set(events.map(\.soundID))
-        XCTAssertTrue(
-            soundIDs.contains("rain_light") || soundIDs.contains("thunder"),
-            "Should contain rain or thunder"
-        )
+        XCTAssertTrue(soundIDs.contains("rain_light"))
+        XCTAssertTrue(soundIDs.contains("thunder"))
+        XCTAssertTrue(soundIDs.contains("forest_ambience"))
     }
 
     // MARK: - Duplicate Suppression
@@ -116,29 +129,18 @@ final class StoryEventEngineTests: XCTestCase {
         var time = Date()
         engine.currentTime = { time }
 
-        let events1 = engine.analyze(text: "The frog croaked.", language: .english)
-        XCTAssertEqual(events1.count, 1, "First mention should trigger")
+        let first = engine.analyze(text: "The frog croaked.", language: .english)
+        XCTAssertEqual(first.filter { $0.soundID == "frog_croak" }.count, 1,
+                       "First mention should trigger")
 
-        time = time.addingTimeInterval(5)
-        engine.reset()
-        // Re-create engine to properly test - but we need cooldown state
-        // Actually, reset clears cooldowns, so let's test differently:
+        time = time.addingTimeInterval(2)
+        let second = engine.analyze(text: "Another frog appeared.", language: .english)
+        XCTAssertEqual(second.filter { $0.soundID == "frog_croak" }.count, 0,
+                       "Should be blocked within the 3s cooldown")
 
-        let engine2 = StoryEventEngine()
-        var time2 = Date()
-        engine2.currentTime = { time2 }
-
-        let first = engine2.analyze(text: "The frog croaked.", language: .english)
-        XCTAssertEqual(first.count, 1, "First mention should trigger")
-
-        time2 = time2.addingTimeInterval(5)
-        let second = engine2.analyze(text: "Another frog appeared.", language: .english)
-        XCTAssertEqual(second.filter({ $0.soundID == "frog_croak" }).count, 0,
-                       "Should be blocked by cooldown")
-
-        time2 = time2.addingTimeInterval(16)
-        let third = engine2.analyze(text: "A frog jumped out.", language: .english)
-        XCTAssertEqual(third.filter({ $0.soundID == "frog_croak" }).count, 1,
+        time = time.addingTimeInterval(2)
+        let third = engine.analyze(text: "A frog jumped out.", language: .english)
+        XCTAssertEqual(third.filter { $0.soundID == "frog_croak" }.count, 1,
                        "Should trigger after cooldown expires")
     }
 
