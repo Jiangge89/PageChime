@@ -190,6 +190,26 @@ export function testEnv(overrides: Partial<Env> = {}): Env {
     DEVICE_KEYS: new MemoryKeyStore(),
     DEVICE_LIMITER: new CountingLimiter(),
     AUTH_LIMITER: new CountingLimiter(),
+    SOUNDS_LIMITER: new CountingLimiter(),
     ...overrides,
   };
+}
+
+export class MemoryObjectStore {
+  readonly objects = new Map<string, Uint8Array>();
+  put(key: string, value: string | Uint8Array) {
+    this.objects.set(key, typeof value === "string" ? textEncoder.encode(value) : value);
+  }
+  async get(key: string) {
+    const data = this.objects.get(key);
+    if (!data) return null;
+    let hash = 0;
+    for (const byte of data) hash = (hash * 31 + byte) >>> 0;
+    return {
+      body: new Blob([data]).stream(),
+      size: data.length,
+      httpEtag: `"${hash.toString(16)}"`,
+      text: async () => new TextDecoder().decode(data),
+    };
+  }
 }

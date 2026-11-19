@@ -68,6 +68,3 @@ export const CATALOG: CatalogSound[] = [
   { id: "farm_ambience", description: "farm atmosphere with animals", ambience: true },
   { id: "wind_trees", description: "wind rustling through trees and leaves", ambience: true },
 ];
-
-export const ONE_SHOT_IDS = new Set(CATALOG.filter((s) => !s.ambience).map((s) => s.id));
-export const AMBIENCE_IDS = new Set(CATALOG.filter((s) => s.ambience).map((s) => s.id));

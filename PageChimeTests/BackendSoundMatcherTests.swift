@@ -36,7 +36,10 @@ final class BackendSoundMatcherTests: XCTestCase {
     }
 
     private func matcher(sessions: SessionProviding? = nil) -> BackendSoundMatcher {
-        BackendSoundMatcher(baseURL: baseURL, session: urlSession, sessions: sessions ?? provider())
+        BackendSoundMatcher(backend: Backend(
+            baseURL: baseURL, apiSession: urlSession, downloadSession: urlSession,
+            sessions: sessions ?? provider()
+        ))
     }
 
     // MARK: - Analysis
@@ -51,7 +54,8 @@ final class BackendSoundMatcherTests: XCTestCase {
 
         XCTAssertEqual(result.sounds.map(\.id), ["owl_hoot"])
         XCTAssertEqual(result.sounds.first?.trigger, "an owl")
-        XCTAssertEqual(result.ambience, ["night_ambience"])
+        // Unknown ids pass through; the view model filters what it can't play.
+        XCTAssertEqual(result.ambience, ["night_ambience", "not_in_app"])
 
         let request = try XCTUnwrap(StubServer.requests.last { $0.path == "/v1/analyze" })
         XCTAssertEqual(request.authorization, "Bearer T1")
@@ -97,7 +101,7 @@ final class BackendSoundMatcherTests: XCTestCase {
     }
 
     func testMissingBackendURLMeansNotConfigured() async {
-        let matcher = BackendSoundMatcher(baseURL: nil)
+        let matcher = BackendSoundMatcher(backend: nil)
         do {
             _ = try await matcher.analyze(text: "hello", context: "")
             XCTFail("Expected an error")
@@ -198,73 +202,5 @@ private final class FakeAttest: AppAttesting, @unchecked Sendable {
     func generateAssertion(_ keyId: String, clientDataHash: Data) async throws -> Data {
         assertedKeys.append(keyId)
         return Data("assertion".utf8)
-    }
-}
-
-/// In-process fake of the PageChime API.
-private final class StubServer: URLProtocol {
-    struct Recorded {
-        let path: String
-        let authorization: String?
-        let body: [String: Any]
-    }
-
-    typealias Route = (Recorded) -> (Int, [String: Any])
-
-    private static let lock = NSLock()
-    private static var _routes: [String: Route] = [:]
-    private static var _requests: [Recorded] = []
-
-    static var routes: [String: Route] {
-        get { lock.withLock { _routes } }
-        set { lock.withLock { _routes = newValue } }
-    }
-
-    static var requests: [Recorded] { lock.withLock { _requests } }
-
-    static func reset() {
-        lock.withLock {
-            _routes = [:]
-            _requests = []
-        }
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        let recorded = Recorded(
-            path: request.url?.path ?? "",
-            authorization: request.value(forHTTPHeaderField: "Authorization"),
-            body: (try? JSONSerialization.jsonObject(with: Self.bodyData(of: request))) as? [String: Any] ?? [:]
-        )
-        let route = Self.lock.withLock {
-            Self._requests.append(recorded)
-            return Self._routes[recorded.path]
-        }
-        let (status, json) = route?(recorded) ?? (404, ["error": "not found"])
-
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: (try? JSONSerialization.data(withJSONObject: json)) ?? Data())
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-
-    /// URLSession moves `httpBody` into a stream before it reaches a URLProtocol.
-    private static func bodyData(of request: URLRequest) -> Data {
-        if let body = request.httpBody { return body }
-        guard let stream = request.httpBodyStream else { return Data() }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while stream.hasBytesAvailable {
-            let count = stream.read(&buffer, maxLength: buffer.count)
-            if count <= 0 { break }
-            data.append(buffer, count: count)
-        }
-        return data
     }
 }

@@ -5,7 +5,7 @@ import {
   MAX_CONTEXT_LENGTH,
   parseAnalyzeRequest,
   sanitizeResult,
-  SYSTEM_PROMPT,
+  BUNDLED_CATALOG,
   UpstreamError,
 } from "../src/analyze";
 
@@ -86,7 +86,7 @@ describe("analyzeWithOpenAI", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer key");
     const body = JSON.parse(init.body as string);
     expect(body.model).toBe("gpt-4o-mini");
-    expect(body.messages[0].content).toBe(SYSTEM_PROMPT);
+    expect(body.messages[0].content).toBe(BUNDLED_CATALOG.systemPrompt);
     expect(body.messages[1].content).toBe("Story so far: night\n\nNew text: an owl");
   });
 

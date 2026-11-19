@@ -6,15 +6,18 @@
  *   2. POST /v1/attest  (new key)    → App Attest attestation  → session token
  *      POST /v1/assert  (known key)  → App Attest assertion    → session token
  *   3. POST /v1/analyze (Bearer)     → sound analysis for new story text
+ *      GET  /v1/library (Bearer)     → cloud sound library manifest
+ *      GET  /v1/sounds/<file> (Bearer) → audio file from the library
  *
  * In local development (ALLOW_DEV_SESSIONS=true), POST /v1/dev-session
  * returns a token without App Attest, since the simulator can't attest.
  */
 import { AttestationError, verifyAssertion, verifyAttestation, type AttestedKey } from "./appAttest";
-import { analyzeWithOpenAI, parseAnalyzeRequest, UpstreamError } from "./analyze";
+import { analyzeWithOpenAI, parseAnalyzeRequest, SoundCatalog, UpstreamError } from "./analyze";
 import { APPLE_APP_ATTEST_ROOT_PEM } from "./appleRoot";
 import { fromBase64, pemToDer, sha256, textEncoder, toBase64Url } from "./encoding";
-import { createChallenge, createSessionToken, verifyChallenge, verifySessionToken } from "./tokens";
+import { FILE_PATTERN, loadManifest, mergedCatalog, SOUND_PREFIX, type ObjectStore } from "./library";
+import { createChallenge, createSessionToken, verifyChallenge, verifySessionToken, type Session } from "./tokens";
 
 /** Subset of the Workers rate limiting binding we use. */
 export interface RateLimiter {
@@ -39,6 +42,49 @@ export interface Env {
   DEVICE_LIMITER: RateLimiter;
   /** Per-IP limit on challenge, attest, assert and dev-session requests. */
   AUTH_LIMITER: RateLimiter;
+  /** Per-device limit on library and sound file requests. */
+  SOUNDS_LIMITER: RateLimiter;
+  /** R2 bucket with library.json and sounds/. Optional: without it the library is empty. */
+  SOUNDS?: ObjectStore;
+}
+
+let catalogCache: { json: string; catalog: SoundCatalog } | null = null;
+
+/** The analysis catalog for the current library, rebuilt only when it changes. */
+async function currentCatalog(env: Env): Promise<SoundCatalog> {
+  const { manifest, json } = await loadManifest(env.SOUNDS);
+  if (catalogCache?.json !== json) {
+    catalogCache = { json, catalog: new SoundCatalog(mergedCatalog(manifest)) };
+  }
+  return catalogCache.catalog;
+}
+
+async function sessionFrom(request: Request, env: Env): Promise<Session | null> {
+  const auth = request.headers.get("Authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return token ? verifySessionToken(env.TOKEN_SECRET, token) : null;
+}
+
+async function serveSound(file: string, env: Env): Promise<Response> {
+  // Files are content-hashed, so the edge cache can keep them forever.
+  // (The Cache API is a no-op on workers.dev; it works on a custom domain.)
+  const edgeCache = typeof caches !== "undefined" ? (caches as unknown as { default: Cache }).default : null;
+  const cacheKey = new Request(`https://sound-cache.internal/${file}`);
+  const hit = await edgeCache?.match(cacheKey);
+  if (hit) return hit;
+
+  const object = await env.SOUNDS?.get(SOUND_PREFIX + file);
+  if (!object?.body) return error(404, "not found");
+  const response = new Response(object.body, {
+    headers: {
+      "Content-Type": "audio/mp4",
+      "Content-Length": String(object.size),
+      "Cache-Control": "public, max-age=31536000, immutable",
+      ETag: object.httpEtag,
+    },
+  });
+  if (edgeCache) await edgeCache.put(cacheKey, response.clone());
+  return response;
 }
 
 const MAX_BODY_BYTES = 32 * 1024;
@@ -79,6 +125,26 @@ export async function handleRequest(request: Request, env: Env, options: { rootC
 
   if (request.method === "GET" && pathname === "/v1/health") {
     return json({ ok: true });
+  }
+
+  if (request.method === "GET" && (pathname === "/v1/library" || pathname.startsWith("/v1/sounds/"))) {
+    const session = await sessionFrom(request, env);
+    if (!session) return error(401, "session invalid or expired");
+    if (!(await env.SOUNDS_LIMITER.limit({ key: session.sub })).success) return error(429, "rate limited");
+
+    if (pathname === "/v1/library") {
+      const { json: body, etag } = await loadManifest(env.SOUNDS);
+      const headers: Record<string, string> = { "Content-Type": "application/json", "Cache-Control": "no-cache" };
+      if (etag) {
+        headers.ETag = etag;
+        if (request.headers.get("If-None-Match") === etag) return new Response(null, { status: 304, headers });
+      }
+      return new Response(body, { headers });
+    }
+
+    const file = decodeURIComponent(pathname.slice("/v1/sounds/".length));
+    if (!FILE_PATTERN.test(file)) return error(404, "not found");
+    return serveSound(file, env);
   }
   if (request.method !== "POST") return error(404, "not found");
 
@@ -153,9 +219,7 @@ export async function handleRequest(request: Request, env: Env, options: { rootC
     }
 
     case "/v1/analyze": {
-      const auth = request.headers.get("Authorization") ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      const session = token ? await verifySessionToken(env.TOKEN_SECRET, token) : null;
+      const session = await sessionFrom(request, env);
       if (!session) return error(401, "session invalid or expired");
       if (!(await env.DEVICE_LIMITER.limit({ key: session.sub })).success) return error(429, "rate limited");
 
@@ -166,6 +230,7 @@ export async function handleRequest(request: Request, env: Env, options: { rootC
         const result = await analyzeWithOpenAI(analyzeRequest, {
           apiKey: env.OPENAI_API_KEY,
           model: env.OPENAI_MODEL || "gpt-4o-mini",
+          catalog: await currentCatalog(env),
         });
         return json(result);
       } catch (e) {

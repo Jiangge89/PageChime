@@ -1,4 +1,4 @@
-import { AMBIENCE_IDS, CATALOG, ONE_SHOT_IDS } from "./catalog";
+import { CATALOG, type CatalogSound } from "./catalog";
 
 export const MAX_TEXT_LENGTH = 1000;
 export const MAX_CONTEXT_LENGTH = 1000;
@@ -30,19 +30,34 @@ export class UpstreamError extends Error {
   }
 }
 
-function catalogSection(ambience: boolean): string {
-  return CATALOG.filter((s) => Boolean(s.ambience) === ambience)
+/** A set of sounds the LLM may choose from, with the prompt built for it. */
+export class SoundCatalog {
+  readonly oneShotIds: Set<string>;
+  readonly ambienceIds: Set<string>;
+  readonly systemPrompt: string;
+
+  constructor(readonly sounds: CatalogSound[]) {
+    this.oneShotIds = new Set(sounds.filter((s) => !s.ambience).map((s) => s.id));
+    this.ambienceIds = new Set(sounds.filter((s) => s.ambience).map((s) => s.id));
+    this.systemPrompt = buildSystemPrompt(sounds);
+  }
+}
+
+function catalogSection(sounds: CatalogSound[], ambience: boolean): string {
+  return sounds
+    .filter((s) => Boolean(s.ambience) === ambience)
     .map((s) => `- ${s.id}: ${s.description}`)
     .join("\n");
 }
 
-export const SYSTEM_PROMPT = `You add sound effects, in real time, to a children's story that a parent is reading aloud. You receive the story read so far (context) and the newly read text.
+function buildSystemPrompt(sounds: CatalogSound[]): string {
+  return `You add sound effects, in real time, to a children's story that a parent is reading aloud. You receive the story read so far (context) and the newly read text.
 
 One-shot sounds (play once when the new text describes them happening):
-${catalogSection(false)}
+${catalogSection(sounds, false)}
 
 Ambience beds (looping background for the current setting):
-${catalogSection(true)}
+${catalogSection(sounds, true)}
 
 Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null}
 
@@ -51,6 +66,10 @@ Rules:
 - "trigger": the shortest phrase copied verbatim from the new text that identifies the sound.
 - "ambience": 0-${MAX_AMBIENCE} ambience ids for where the story is at the end of the new text. Use the context to understand the setting, and keep the same set while the setting doesn't change. Return null if the new text says nothing about the setting. Return [] only if the story clearly moves somewhere quiet.
 - Only use ids from the lists above.`;
+}
+
+/** The sounds bundled in the app. */
+export const BUNDLED_CATALOG = new SoundCatalog(CATALOG);
 
 /** Validates and trims the request body; returns null if it's unusable. */
 export function parseAnalyzeRequest(body: unknown): AnalyzeRequest | null {
@@ -70,7 +89,7 @@ export function buildUserMessage({ text, context }: AnalyzeRequest): string {
 }
 
 /** Keeps only well-formed, known sounds from the model's JSON output. */
-export function sanitizeResult(content: string): AnalyzeResult {
+export function sanitizeResult(content: string, catalog: SoundCatalog = BUNDLED_CATALOG): AnalyzeResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -89,10 +108,10 @@ export function sanitizeResult(content: string): AnalyzeResult {
     const { id, trigger } = item as Record<string, unknown>;
     if (typeof id !== "string" || typeof trigger !== "string" || seen.has(id)) continue;
     const match = { id, trigger: trigger.slice(0, 200) };
-    if (ONE_SHOT_IDS.has(id) && oneShots.length < MAX_SOUNDS) {
+    if (catalog.oneShotIds.has(id) && oneShots.length < MAX_SOUNDS) {
       seen.add(id);
       oneShots.push(match);
-    } else if (AMBIENCE_IDS.has(id) && inlineAmbience.length < MAX_AMBIENCE) {
+    } else if (catalog.ambienceIds.has(id) && inlineAmbience.length < MAX_AMBIENCE) {
       seen.add(id);
       inlineAmbience.push(match);
     }
@@ -100,7 +119,9 @@ export function sanitizeResult(content: string): AnalyzeResult {
 
   let ambience: string[] | null = null;
   if (Array.isArray(object.ambience)) {
-    ambience = [...new Set(object.ambience.filter((id): id is string => typeof id === "string" && AMBIENCE_IDS.has(id)))];
+    ambience = [
+      ...new Set(object.ambience.filter((id): id is string => typeof id === "string" && catalog.ambienceIds.has(id))),
+    ];
     ambience = ambience.slice(0, MAX_AMBIENCE);
   }
 
@@ -109,9 +130,10 @@ export function sanitizeResult(content: string): AnalyzeResult {
 
 export async function analyzeWithOpenAI(
   request: AnalyzeRequest,
-  options: { apiKey: string; model: string; fetcher?: typeof fetch; timeoutMs?: number },
+  options: { apiKey: string; model: string; catalog?: SoundCatalog; fetcher?: typeof fetch; timeoutMs?: number },
 ): Promise<AnalyzeResult> {
   const fetcher = options.fetcher ?? fetch;
+  const catalog = options.catalog ?? BUNDLED_CATALOG;
   let response: Response;
   try {
     response = await fetcher("https://api.openai.com/v1/chat/completions", {
@@ -123,7 +145,7 @@ export async function analyzeWithOpenAI(
       body: JSON.stringify({
         model: options.model,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: catalog.systemPrompt },
           { role: "user", content: buildUserMessage(request) },
         ],
         temperature: 0,
@@ -145,5 +167,5 @@ export async function analyzeWithOpenAI(
   const json = (await response.json()) as { choices?: { message?: { content?: string } }[] };
   const content = json.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new UpstreamError("model returned no content", 502);
-  return sanitizeResult(content);
+  return sanitizeResult(content, catalog);
 }

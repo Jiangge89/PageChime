@@ -8,19 +8,22 @@ final class ReadingSessionViewModelTests: XCTestCase {
     private var llm: FakeLLM!
     private var cacheURL: URL!
     private var viewModel: ReadingSessionViewModel!
+    private var catalog: FakeCatalog!
     private var now = Date()
 
     override func setUp() async throws {
         speech = FakeSpeech()
         player = FakePlayer()
         llm = FakeLLM()
+        catalog = FakeCatalog()
         cacheURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sound_cache_\(UUID().uuidString).json")
         viewModel = ReadingSessionViewModel(
             speechService: speech,
             soundPlayer: player,
             llmService: llm,
-            soundCache: SoundCache(fileURL: cacheURL)
+            soundCache: SoundCache(fileURL: cacheURL),
+            catalog: catalog
         )
         viewModel.currentTime = { [unowned self] in self.now }
 
@@ -158,6 +161,25 @@ final class ReadingSessionViewModelTests: XCTestCase {
         try await waitUntil { self.llm.calls.count == 2 }
     }
 
+    func testCloudLibrarySoundsArePlayedAndUnknownOnesIgnored() async throws {
+        catalog.cloud["wolf_howl"] = SoundInfo(isAmbience: false, type: .animal, entity: "wolf", intensity: .normal)
+        catalog.cloud["cave_drips"] = SoundInfo(isAmbience: true, type: .environment, entity: "cave", intensity: .normal)
+        llm.responder = { _ in
+            SoundAnalysis(
+                sounds: [LLMSoundMatch(id: "wolf_howl", trigger: "strange noise"),
+                         LLMSoundMatch(id: "not_a_sound", trigger: "attic")],
+                ambience: ["cave_drips", "unknown_bed"]
+            )
+        }
+
+        speech.send("Something made a strange noise up in the attic")
+        try await waitUntil { self.viewModel.analysisLogs.contains { $0.method == .llm } }
+
+        XCTAssertEqual(player.playedIDs, ["wolf_howl"])
+        XCTAssertEqual(player.sceneCalls.last, ["cave_drips"])
+        XCTAssertEqual(viewModel.recentEffects.first { $0.soundID == "wolf_howl" }?.entity, "wolf")
+    }
+
     func testSpeechActivityIsReportedForDucking() async throws {
         speech.send("Once upon a time")
         try await waitUntil { self.player.speechActivityCount > 0 }
@@ -204,6 +226,14 @@ private final class FakeSpeech: SpeechRecognizing {
     func send(_ text: String) {
         transcript = text
         onTranscriptUpdate?(text)
+    }
+}
+
+/// Bundled sounds plus whatever a test adds as "cloud" sounds.
+private final class FakeCatalog: SoundCatalogProviding {
+    var cloud: [String: SoundInfo] = [:]
+    func info(for soundID: String) -> SoundInfo? {
+        BundledSoundCatalog.shared.info(for: soundID) ?? cloud[soundID]
     }
 }
 

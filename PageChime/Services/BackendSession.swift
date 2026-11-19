@@ -35,6 +35,28 @@ struct BackendHTTP {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         return (http.statusCode, json)
     }
+
+    func get(
+        _ path: String, bearer: String?, headers: [String: String] = [:]
+    ) async throws -> (Int, (data: Data, response: HTTPURLResponse)) {
+        let (data, response) = try await session.data(for: getRequest(path, bearer: bearer, headers: headers))
+        guard let http = response as? HTTPURLResponse else { throw BackendError.invalidResponse }
+        return (http.statusCode, (data, http))
+    }
+
+    /// Downloads to a temporary file, which the caller must move.
+    func download(_ path: String, bearer: String?) async throws -> (Int, URL) {
+        let (url, response) = try await session.download(for: getRequest(path, bearer: bearer, headers: [:]))
+        guard let http = response as? HTTPURLResponse else { throw BackendError.invalidResponse }
+        return (http.statusCode, url)
+    }
+
+    private func getRequest(_ path: String, bearer: String?, headers: [String: String]) -> URLRequest {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
+        return request
+    }
 }
 
 /// Supplies session tokens for `/v1/analyze`.

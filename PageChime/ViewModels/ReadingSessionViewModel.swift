@@ -18,6 +18,7 @@ final class ReadingSessionViewModel: ObservableObject {
     private let soundPlayer: SoundEffectPlaying
     private let llmService: SoundMatching
     private let soundCache: SoundCache
+    private let catalog: SoundCatalogProviding
     private var sessionID: UInt = 0
 
     /// Transcript length already scanned by the instant keyword path.
@@ -42,10 +43,6 @@ final class ReadingSessionViewModel: ObservableObject {
     /// Characters of earlier story sent along with each segment.
     private let contextLength = 300
 
-    private static let triggerLookup: [String: TriggerEntry] = {
-        Dictionary(uniqueKeysWithValues: TriggerLibrary.defaultTriggers.map { ($0.soundID, $0) })
-    }()
-
     var isListening: Bool { state == .listening }
     private var isStartingOrListening: Bool { state == .starting || state == .listening }
 
@@ -54,13 +51,15 @@ final class ReadingSessionViewModel: ObservableObject {
         eventEngine: StoryEventEngine = StoryEventEngine(),
         soundPlayer: SoundEffectPlaying = SoundEffectPlayer(),
         llmService: SoundMatching = BackendSoundMatcher(),
-        soundCache: SoundCache = SoundCache()
+        soundCache: SoundCache = SoundCache(),
+        catalog: SoundCatalogProviding = SoundLibrary.shared
     ) {
         self.speechService = speechService
         self.eventEngine = eventEngine
         self.soundPlayer = soundPlayer
         self.llmService = llmService
         self.soundCache = soundCache
+        self.catalog = catalog
         setupCallbacks()
     }
 
@@ -286,9 +285,12 @@ final class ReadingSessionViewModel: ObservableObject {
             return
         }
 
-        let isAmbience = { (id: String) in Self.triggerLookup[id]?.isAmbience ?? false }
-        let oneShots = analysis.sounds.filter { !isAmbience($0.id) }
-        let inlineAmbience = analysis.sounds.map(\.id).filter(isAmbience)
+        // Ignore sounds neither bundled nor in the cloud library (e.g. ones
+        // added to the server after this app version's library was fetched).
+        let known = analysis.sounds.filter { catalog.info(for: $0.id) != nil }
+        let isAmbience = { (id: String) in self.catalog.info(for: id)?.isAmbience ?? false }
+        let oneShots = known.filter { !isAmbience($0.id) }
+        let inlineAmbience = known.map(\.id).filter(isAmbience)
         soundCache.store(triggers: oneShots, language: language)
 
         // Late one-shots would no longer match what is being read.
@@ -306,7 +308,7 @@ final class ReadingSessionViewModel: ObservableObject {
         // Ambience follows the scene, so it's applied even when late.
         var notes: [String] = []
         if let sceneAmbience = analysis.ambience {
-            let scene = Set(sceneAmbience + inlineAmbience)
+            let scene = Set(sceneAmbience.filter(isAmbience) + inlineAmbience)
             applyScene(scene, sourceText: segment)
             notes.append("scene: " + (scene.isEmpty ? "quiet" : scene.sorted().joined(separator: ", ")))
         } else {
@@ -360,13 +362,13 @@ final class ReadingSessionViewModel: ObservableObject {
     }
 
     private func makeEvent(_ soundID: String, sourceText: String) -> StoryEvent? {
-        guard let trigger = Self.triggerLookup[soundID] else { return nil }
+        guard let info = catalog.info(for: soundID) else { return nil }
         return StoryEvent(
             id: UUID(),
-            type: trigger.eventType,
-            entity: trigger.entity,
+            type: info.type,
+            entity: info.entity,
             soundID: soundID,
-            intensity: trigger.intensity,
+            intensity: info.intensity,
             delayMilliseconds: 0,
             cooldownSeconds: cooldownInterval,
             sourceText: sourceText

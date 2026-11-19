@@ -24,7 +24,7 @@ final class SoundEffectPlayerTests: XCTestCase {
     }
 
     func testSceneReplacesAmbienceBeds() {
-        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false))
+        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false), catalog: BundledSoundCatalog.shared, cloud: nil)
         defer { player.stopAll() }
 
         player.setAmbience([event("forest_ambience"), event("night_ambience")])
@@ -35,7 +35,7 @@ final class SoundEffectPlayerTests: XCTestCase {
     }
 
     func testAmbienceIsCappedAtMaxBeds() {
-        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false))
+        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false), catalog: BundledSoundCatalog.shared, cloud: nil)
         defer { player.stopAll() }
 
         for id in ["forest_ambience", "night_ambience", "ocean_waves", "farm_ambience"] {
@@ -46,11 +46,119 @@ final class SoundEffectPlayerTests: XCTestCase {
     }
 
     func testStopAllClearsAmbience() {
-        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false))
+        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false), catalog: BundledSoundCatalog.shared, cloud: nil)
         player.setAmbience([event("rain_light")])
         player.play(event: event("thunder"))
         player.stopAll()
         XCTAssertTrue(player.activeAmbienceIDs.isEmpty)
+    }
+
+    // MARK: - Cloud sounds
+
+    private func cloudPlayer(_ cloud: FakeCloud) -> SoundEffectPlayer {
+        SoundEffectPlayer(buffers: AudioBufferCache(preload: false), catalog: cloud, cloud: cloud)
+    }
+
+    private func toneFile(seconds: Double, sampleRate: Double = 44100, channels: AVAudioChannelCount = 2) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tone-\(UUID().uuidString).m4a")
+        try writeTestTone(to: url, seconds: seconds, sampleRate: sampleRate, channels: channels)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testDownloadedCloudAmbienceStreamsAndLoopsWithCrossfade() async throws {
+        let cloud = FakeCloud()
+        cloud.add("cave_drips", ambience: true, file: try toneFile(seconds: 1.2), downloaded: true)
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.play(event: event("cave_drips"))
+        XCTAssertEqual(player.streamedAmbienceIDs, ["cave_drips"])
+
+        // A 1.2s file crossfades into itself every ~0.9s.
+        try await waitUntil(timeout: 5) { player.completedLoops >= 2 }
+        XCTAssertEqual(player.activeAmbienceIDs, ["cave_drips"])
+    }
+
+    func testCloudAmbienceStartsAfterDownload() async throws {
+        let cloud = FakeCloud()
+        cloud.add("cave_drips", ambience: true, file: try toneFile(seconds: 3), downloaded: false)
+        cloud.fetchDelay = 0.2
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.setAmbience([event("cave_drips")])
+        XCTAssertTrue(player.activeAmbienceIDs.isEmpty)
+        try await waitUntil { player.streamedAmbienceIDs == ["cave_drips"] }
+    }
+
+    func testAmbienceLeftTheSceneWhileDownloadingDoesNotStart() async throws {
+        let cloud = FakeCloud()
+        cloud.add("cave_drips", ambience: true, file: try toneFile(seconds: 3), downloaded: false)
+        cloud.fetchDelay = 0.3
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.setAmbience([event("cave_drips")])
+        player.setAmbience([])
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertTrue(player.activeAmbienceIDs.isEmpty)
+    }
+
+    func testMonoLowRateCloudFileStillStreams() async throws {
+        let cloud = FakeCloud()
+        cloud.add("cave_drips", ambience: true, file: try toneFile(seconds: 2, sampleRate: 22050, channels: 1), downloaded: true)
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.play(event: event("cave_drips"))
+        XCTAssertEqual(player.streamedAmbienceIDs, ["cave_drips"])
+    }
+
+    func testCloudOneShotPlaysWhenDownloadIsQuick() async throws {
+        let cloud = FakeCloud()
+        cloud.add("wolf_howl", ambience: false, file: try toneFile(seconds: 0.5), downloaded: false)
+        cloud.fetchDelay = 0.1
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.play(event: event("wolf_howl"))
+        try await waitUntil { player.recentOneShots == ["wolf_howl"] }
+    }
+
+    func testCloudOneShotIsSkippedWhenDownloadIsTooSlow() async throws {
+        let cloud = FakeCloud()
+        cloud.add("wolf_howl", ambience: false, file: try toneFile(seconds: 0.5), downloaded: false)
+        cloud.fetchDelay = 1.8
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.play(event: event("wolf_howl"))
+        try await waitUntil(timeout: 4) { cloud.fetches == 1 && cloud.downloaded.contains("wolf_howl") }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(player.recentOneShots.isEmpty)
+    }
+
+    func testBundledSoundPlaysAtOnceAndFetchesCloudVariantForNextTime() async throws {
+        let cloud = FakeCloud()
+        cloud.add("thunder", ambience: false, file: try toneFile(seconds: 0.5), downloaded: false)
+        let player = cloudPlayer(cloud)
+        defer { player.stopAll() }
+
+        player.play(event: event("thunder"))
+        XCTAssertEqual(player.recentOneShots, ["thunder"], "Bundled version plays immediately")
+        try await waitUntil { cloud.downloaded.contains("thunder") }
+    }
+
+    private func waitUntil(timeout: TimeInterval = 3, _ condition: @escaping () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while await MainActor.run(body: { !condition() }) {
+            if Date() > deadline {
+                XCTFail("Timed out waiting for condition")
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
     }
 
     private func event(_ soundID: String) -> StoryEvent {
@@ -58,5 +166,38 @@ final class SoundEffectPlayerTests: XCTestCase {
             id: UUID(), type: .environment, entity: soundID, soundID: soundID,
             intensity: .soft, delayMilliseconds: 0, cooldownSeconds: 3, sourceText: ""
         )
+    }
+}
+
+/// Cloud library stand-in serving local files, with an optional download delay.
+private final class FakeCloud: SoundCatalogProviding, CloudSoundSource, @unchecked Sendable {
+    private var sounds: [String: (ambience: Bool, file: URL)] = [:]
+    var downloaded: Set<String> = []
+    var fetchDelay: TimeInterval = 0
+    private(set) var fetches = 0
+
+    func add(_ id: String, ambience: Bool, file: URL, downloaded isDownloaded: Bool) {
+        sounds[id] = (ambience, file)
+        if isDownloaded { downloaded.insert(id) }
+    }
+
+    func info(for soundID: String) -> SoundInfo? {
+        if let bundled = BundledSoundCatalog.shared.info(for: soundID) { return bundled }
+        guard let sound = sounds[soundID] else { return nil }
+        return SoundInfo(isAmbience: sound.ambience, type: .environment, entity: soundID, intensity: .normal)
+    }
+
+    func hasCloudVariants(_ soundID: String) -> Bool { sounds[soundID] != nil }
+
+    func localFile(for soundID: String) -> URL? {
+        downloaded.contains(soundID) ? sounds[soundID]?.file : nil
+    }
+
+    func fetchFile(for soundID: String) async throws -> URL {
+        fetches += 1
+        try await Task.sleep(nanoseconds: UInt64(fetchDelay * 1_000_000_000))
+        guard let file = sounds[soundID]?.file else { throw BackendError.invalidResponse }
+        await MainActor.run { _ = downloaded.insert(soundID) }
+        return file
     }
 }
