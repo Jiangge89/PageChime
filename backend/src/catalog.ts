@@ -1,0 +1,73 @@
+/**
+ * Sounds the LLM may pick from. IDs must match `TriggerLibrary` in the iOS
+ * app; the app ignores IDs it doesn't know.
+ */
+export interface CatalogSound {
+  id: string;
+  description: string;
+  ambience?: boolean;
+}
+
+export const CATALOG: CatalogSound[] = [
+  { id: "dog_bark", description: "dog barking" },
+  { id: "cat_meow", description: "cat meowing" },
+  { id: "frog_croak", description: "frog croaking" },
+  { id: "cow_moo", description: "cow mooing" },
+  { id: "sheep_baa", description: "sheep or goat bleating" },
+  { id: "lion_roar", description: "lion roaring" },
+  { id: "elephant_trumpet", description: "elephant trumpeting" },
+  { id: "bird_chirp", description: "bird chirping or singing" },
+  { id: "owl_hoot", description: "owl hooting" },
+  { id: "duck_quack", description: "duck quacking" },
+  { id: "chicken_cluck", description: "chicken or rooster" },
+  { id: "horse_neigh", description: "horse neighing or galloping" },
+  { id: "squirrel_chirp", description: "squirrel chirping" },
+  { id: "dinosaur_roar", description: "dinosaur roaring" },
+  { id: "whale_call", description: "whale singing" },
+  { id: "tiger_roar", description: "tiger roaring or growling" },
+  { id: "monkey_call", description: "monkey calling" },
+  { id: "fox_bark", description: "fox barking" },
+  { id: "zebra_call", description: "zebra calling" },
+  { id: "giraffe_hum", description: "giraffe humming" },
+  { id: "mouse_squeak", description: "mouse squeaking" },
+  { id: "rain_light", description: "rain falling, rainy weather", ambience: true },
+  { id: "thunder", description: "thunder rumbling" },
+  { id: "wind", description: "wind blowing", ambience: true },
+  { id: "storm", description: "thunderstorm, heavy rain and wind", ambience: true },
+  { id: "door_knock", description: "knocking on door" },
+  { id: "door_open", description: "door opening" },
+  { id: "door_slam", description: "door slamming shut" },
+  { id: "footsteps", description: "footsteps or walking" },
+  { id: "running", description: "running footsteps" },
+  { id: "water_splash", description: "water splashing" },
+  { id: "bell", description: "bell ringing" },
+  { id: "clock_tick", description: "clock ticking" },
+  { id: "laughter", description: "laughing" },
+  { id: "child_crying", description: "child crying or sobbing" },
+  { id: "waves_crashing", description: "ocean waves crashing" },
+  { id: "children_playing", description: "children playing and laughing" },
+  { id: "car", description: "car engine or driving" },
+  { id: "train", description: "train moving or whistle" },
+  { id: "airplane", description: "airplane flying" },
+  { id: "helicopter", description: "helicopter flying" },
+  { id: "boat", description: "small boat on water" },
+  { id: "ship_horn", description: "ship horn or foghorn" },
+  { id: "bus", description: "bus engine" },
+  { id: "subway", description: "subway or metro train" },
+  { id: "tractor", description: "tractor engine" },
+  { id: "bulldozer", description: "bulldozer working" },
+  { id: "harvester", description: "harvester or combine" },
+  { id: "drill", description: "electric drill" },
+  { id: "excavator", description: "excavator or digger" },
+  { id: "police_siren", description: "police car siren" },
+  { id: "ambulance_siren", description: "ambulance siren" },
+  { id: "fire_truck_siren", description: "fire truck siren" },
+  { id: "forest_ambience", description: "forest atmosphere with birds and insects", ambience: true },
+  { id: "ocean_waves", description: "ocean or sea atmosphere", ambience: true },
+  { id: "night_ambience", description: "nighttime crickets and quiet", ambience: true },
+  { id: "farm_ambience", description: "farm atmosphere with animals", ambience: true },
+  { id: "wind_trees", description: "wind rustling through trees and leaves", ambience: true },
+];
+
+export const ONE_SHOT_IDS = new Set(CATALOG.filter((s) => !s.ambience).map((s) => s.id));
+export const AMBIENCE_IDS = new Set(CATALOG.filter((s) => s.ambience).map((s) => s.id));

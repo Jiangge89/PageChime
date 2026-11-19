@@ -6,5 +6,12 @@
 	<string>PageChime listens to your storytelling to play matching sound effects. Your voice is processed during the reading session and is never saved.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>PageChime uses speech recognition to detect story events like animals, weather, and actions, so it can play matching sounds. Transcripts are not saved.</string>
+	<key>PageChimeBackendURL</key>
+	<string>$(PAGECHIME_BACKEND_URL)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

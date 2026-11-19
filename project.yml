@@ -19,6 +19,8 @@ targets:
       - path: PageChime
         excludes:
           - "Resources/Sounds/ATTRIBUTION.md"
+          # Legacy: the OpenAI key now lives on the backend, not in the app.
+          - "Config/Secrets.swift"
     resources:
       - path: PageChime/Resources/Sounds
         buildPhase: resources
@@ -39,6 +41,14 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+      configs:
+        # PageChime API. Debug points at `npm run dev` in backend/ (simulator);
+        # on a device use your Mac's LAN address or the deployed workers.dev URL.
+        # Empty = keyword matching only.
+        Debug:
+          PAGECHIME_BACKEND_URL: "http://localhost:8787"
+        Release:
+          PAGECHIME_BACKEND_URL: ""
 
   PageChimeTests:
     type: bundle.unit-test

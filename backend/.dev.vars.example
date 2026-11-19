@@ -1,0 +1,3 @@
+OPENAI_API_KEY=sk-...
+TOKEN_SECRET=change-me-to-a-long-random-string
+ALLOW_DEV_SESSIONS=true

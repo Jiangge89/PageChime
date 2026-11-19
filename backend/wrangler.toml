@@ -1,0 +1,30 @@
+name = "pagechime-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# Secrets (set with `npx wrangler secret put <NAME>`; locally in .dev.vars):
+#   OPENAI_API_KEY  — OpenAI key used for analysis
+#   TOKEN_SECRET    — random string that signs challenges and session tokens
+
+[vars]
+# "<Apple Team ID>.<bundle ID>". App Attest keys are bound to this app.
+APP_ID = "GY7SG2DH82.com.pagechime.app"
+OPENAI_MODEL = "gpt-4o-mini"
+# Never enable in production: issues sessions without App Attest.
+ALLOW_DEV_SESSIONS = "false"
+
+[[kv_namespaces]]
+binding = "DEVICE_KEYS"
+# Replace with the id printed by `npx wrangler kv namespace create DEVICE_KEYS`.
+id = "00000000000000000000000000000000"
+
+# ~25 analysis requests per minute is normal while reading aloud.
+[[ratelimits]]
+name = "DEVICE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "AUTH_LIMITER"
+namespace_id = "1002"
+simple = { limit = 20, period = 60 }

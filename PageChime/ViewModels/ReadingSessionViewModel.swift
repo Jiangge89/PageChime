@@ -53,7 +53,7 @@ final class ReadingSessionViewModel: ObservableObject {
         speechService: SpeechRecognizing = SpeechRecognizerService(),
         eventEngine: StoryEventEngine = StoryEventEngine(),
         soundPlayer: SoundEffectPlaying = SoundEffectPlayer(),
-        llmService: SoundMatching = LLMService(),
+        llmService: SoundMatching = BackendSoundMatcher(),
         soundCache: SoundCache = SoundCache()
     ) {
         self.speechService = speechService
