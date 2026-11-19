@@ -16,6 +16,7 @@ import { AttestationError, verifyAssertion, verifyAttestation, type AttestedKey 
 import { analyzeWithOpenAI, parseAnalyzeRequest, SoundCatalog, UpstreamError } from "./analyze";
 import { APPLE_APP_ATTEST_ROOT_PEM } from "./appleRoot";
 import { fromBase64, pemToDer, sha256, textEncoder, toBase64Url } from "./encoding";
+import { recordGaps, type GapDatabase } from "./gaps";
 import { FILE_PATTERN, loadManifest, mergedCatalog, SOUND_PREFIX, type ObjectStore } from "./library";
 import { createChallenge, createSessionToken, verifyChallenge, verifySessionToken, type Session } from "./tokens";
 
@@ -46,6 +47,15 @@ export interface Env {
   SOUNDS_LIMITER: RateLimiter;
   /** R2 bucket with library.json and sounds/. Optional: without it the library is empty. */
   SOUNDS?: ObjectStore;
+  /** D1 database counting sounds stories asked for that the library lacks. Optional. */
+  GAPS?: GapDatabase;
+}
+
+export interface RequestOptions {
+  /** Test-only: the App Attest root to trust instead of Apple's. */
+  rootCertificate?: Uint8Array;
+  /** Keeps background work (gap logging) alive after the response is sent. */
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 let catalogCache: { json: string; catalog: SoundCatalog } | null = null;
@@ -120,7 +130,7 @@ function keyStoreKey(keyId: string): string {
   return `key:${keyId}`;
 }
 
-export async function handleRequest(request: Request, env: Env, options: { rootCertificate?: Uint8Array } = {}) {
+export async function handleRequest(request: Request, env: Env, options: RequestOptions = {}) {
   const { pathname } = new URL(request.url);
 
   if (request.method === "GET" && pathname === "/v1/health") {
@@ -227,11 +237,18 @@ export async function handleRequest(request: Request, env: Env, options: { rootC
       if (!analyzeRequest) return error(400, "text is required");
 
       try {
-        const result = await analyzeWithOpenAI(analyzeRequest, {
+        const { missing, ...result } = await analyzeWithOpenAI(analyzeRequest, {
           apiKey: env.OPENAI_API_KEY,
           model: env.OPENAI_MODEL || "gpt-4o-mini",
           catalog: await currentCatalog(env),
         });
+        if (env.GAPS && missing.length > 0) {
+          const logging = recordGaps(env.GAPS, missing, session.sub).catch((e) =>
+            console.warn("gap logging failed", e instanceof Error ? e.message : e),
+          );
+          if (options.waitUntil) options.waitUntil(logging);
+          else await logging;
+        }
         return json(result);
       } catch (e) {
         if (e instanceof UpstreamError) {
@@ -248,9 +265,9 @@ export async function handleRequest(request: Request, env: Env, options: { rootC
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await handleRequest(request, env);
+      return await handleRequest(request, env, { waitUntil: (promise) => ctx.waitUntil(promise) });
     } catch (e) {
       console.error("unhandled error", e instanceof Error ? e.message : e);
       return error(500, "internal error");

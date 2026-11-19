@@ -3,7 +3,7 @@
  * Builds the cloud sound library from a source folder and optionally uploads
  * it to R2.
  *
- *   node scripts/build-library.mjs <source-dir> [--out <dir>] [--upload local|remote] [--bucket <name>]
+ *   node scripts/build-library.mjs <source-dir>... [--out <dir>] [--upload local|remote] [--bucket <name>]
  *
  * <source-dir>/sounds.json lists the sounds; audio files sit next to it:
  *
@@ -25,6 +25,10 @@
  * forever. The manifest is uploaded last, so clients never see a manifest
  * that points at files not yet uploaded.
  *
+ * Several source folders (e.g. `library-src/*`, one per generated batch)
+ * build one library. A sound in more than one folder gets the variants of
+ * all of them, with the name and description of the last.
+ *
  * Requires ffmpeg and ffprobe on PATH.
  */
 import { createHash } from "node:crypto";
@@ -36,16 +40,16 @@ const ID_PATTERN = /^[a-z0-9_]{1,64}$/;
 const CATEGORIES = new Set(["animal", "weather", "vehicle", "action", "environment", "object"]);
 
 function parseArgs(argv) {
-  const args = { source: null, out: "library-dist", upload: null, bucket: "pagechime-sounds" };
+  const args = { sources: [], out: "library-dist", upload: null, bucket: "pagechime-sounds" };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--out") args.out = argv[++i];
     else if (arg === "--upload") args.upload = argv[++i];
     else if (arg === "--bucket") args.bucket = argv[++i];
-    else if (!arg.startsWith("--") && !args.source) args.source = arg;
+    else if (!arg.startsWith("--")) args.sources.push(arg);
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!args.source) throw new Error("Usage: build-library.mjs <source-dir> [--out dir] [--upload local|remote]");
+  if (args.sources.length === 0) throw new Error("Usage: build-library.mjs <source-dir>... [--out dir] [--upload local|remote]");
   if (args.upload && !["local", "remote"].includes(args.upload)) throw new Error("--upload must be local or remote");
   return args;
 }
@@ -98,25 +102,33 @@ function wrangler(args) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const sourceDir = resolve(args.source);
 const outDir = resolve(args.out);
-const entries = JSON.parse(readFileSync(join(sourceDir, "sounds.json"), "utf8"));
-if (!Array.isArray(entries)) fail("sounds.json must be an array");
+
+// Merge the source folders: files become paths, a repeated id adds variants.
+const merged = new Map();
+for (const source of args.sources) {
+  const sourceDir = resolve(source);
+  const list = JSON.parse(readFileSync(join(sourceDir, "sounds.json"), "utf8"));
+  if (!Array.isArray(list)) fail(`${source}/sounds.json must be an array`);
+  for (const [index, entry] of list.entries()) {
+    validateEntry(entry, index);
+    const files = entry.files.map((f) => join(sourceDir, f));
+    const previous = merged.get(entry.id);
+    if (previous && previous.kind !== entry.kind) fail(`${entry.id} is ${previous.kind} in one folder and ${entry.kind} in another`);
+    merged.set(entry.id, { ...entry, files: [...(previous?.files ?? []), ...files] });
+  }
+}
+const entries = [...merged.values()];
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, "sounds"), { recursive: true });
 
-const seen = new Set();
 const sounds = [];
-for (const [index, entry] of entries.entries()) {
-  validateEntry(entry, index);
-  if (seen.has(entry.id)) fail(`duplicate id ${entry.id}`);
-  seen.add(entry.id);
-
+for (const entry of entries) {
   const variants = [];
   for (const [n, file] of entry.files.entries()) {
     const temp = join(outDir, `tmp-${entry.id}-${n}.m4a`);
-    convert(join(sourceDir, file), temp, entry.kind);
+    convert(file, temp, entry.kind);
     const hash = createHash("sha256").update(readFileSync(temp)).digest("hex").slice(0, 10);
     const name = `${entry.id}.${hash}.m4a`;
     renameSync(temp, join(outDir, "sounds", name));

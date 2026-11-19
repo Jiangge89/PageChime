@@ -1,10 +1,12 @@
 import { CATALOG, type CatalogSound } from "./catalog";
+import { GAP_ID_PATTERN, MAX_GAP_DESCRIPTION, type SoundGap } from "./gaps";
 
 export const MAX_TEXT_LENGTH = 1000;
 export const MAX_CONTEXT_LENGTH = 1000;
 const MAX_SOUNDS = 4;
 const MAX_AMBIENCE = 3;
 const MAX_UPCOMING = 6;
+const MAX_MISSING = 2;
 
 export interface AnalyzeRequest {
   text: string;
@@ -22,6 +24,12 @@ export interface AnalyzeResult {
   ambience: string[] | null;
   /** Sounds likely to be needed soon, so the app can download them early. */
   upcoming: string[];
+}
+
+/** The analysis plus what's only for the server. */
+export interface Analysis extends AnalyzeResult {
+  /** Sounds the text called for that the catalog lacks. Not sent to the app. */
+  missing: SoundGap[];
 }
 
 export class UpstreamError extends Error {
@@ -66,14 +74,15 @@ ${catalogSection(sounds, false)}
 Ambience beds (looping background for the current setting):
 ${catalogSection(sounds, true)}
 
-Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null, "upcoming": ["sound_id"]}
+Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null, "upcoming": ["sound_id"], "missing": [{"id": "new_sound_id", "kind": "oneShot" or "ambience", "description": "..."}]}
 
 Rules:
 - "sounds": one-shots for things happening in the NEW text only, never for things only in the context. Skip negated events (e.g. "not a dog", "没有狗"). At most ${MAX_SOUNDS}.
 - "trigger": the shortest phrase copied verbatim from the new text that identifies the sound.
 - "ambience": 0-${MAX_AMBIENCE} ambience ids for where the story is at the end of the new text. Use the context to understand the setting, and keep the same set while the setting doesn't change. Return null if the new text says nothing about the setting. Return [] only if the story clearly moves somewhere quiet.
 - "upcoming": 0-${MAX_UPCOMING} ids (one-shots or ambience) the new text doesn't trigger but the next pages probably will: sounds of characters and places already in the story and, if you recognise a well-known tale, of its later scenes (e.g. the giant in Jack and the Beanstalk). They are downloaded in advance, so prefer sounds specific to this story over generic ones like footsteps. [] if nothing stands out.
-- Only use ids from the lists above.`;
+- "missing": at most ${MAX_MISSING} sounds the new text clearly calls for that no id above fits, e.g. {"id": "trumpet_fanfare", "kind": "oneShot", "description": "a royal trumpet fanfare"}. Report one whenever an animal, voice, object or place in the new text would make a distinct sound and no id is a real match, even if you return nothing else. Don't stand in a loosely related id (no magic_sparkle for a witch's cackle): report it as missing instead. Give a short new snake_case id and a short English description.
+- Apart from "missing", only use ids from the lists above.`;
 }
 
 /** The sounds bundled in the app. */
@@ -97,7 +106,7 @@ export function buildUserMessage({ text, context }: AnalyzeRequest): string {
 }
 
 /** Keeps only well-formed, known sounds from the model's JSON output. */
-export function sanitizeResult(content: string, catalog: SoundCatalog = BUNDLED_CATALOG): AnalyzeResult {
+export function sanitizeResult(content: string, catalog: SoundCatalog = BUNDLED_CATALOG): Analysis {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -139,13 +148,28 @@ export function sanitizeResult(content: string, catalog: SoundCatalog = BUNDLED_
         .slice(0, MAX_UPCOMING)
     : [];
 
-  return { sounds: [...oneShots, ...inlineAmbience], ambience, upcoming };
+  return { sounds: [...oneShots, ...inlineAmbience], ambience, upcoming, missing: parseMissing(object.missing, catalog) };
+}
+
+function parseMissing(value: unknown, catalog: SoundCatalog): SoundGap[] {
+  const gaps: SoundGap[] = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (typeof item !== "object" || item === null) continue;
+    const { id, kind, description } = item as Record<string, unknown>;
+    if (typeof id !== "string" || !GAP_ID_PATTERN.test(id) || catalog.has(id)) continue;
+    if (kind !== "oneShot" && kind !== "ambience") continue;
+    if (typeof description !== "string" || !description.trim()) continue;
+    if (gaps.some((g) => g.id === id)) continue;
+    gaps.push({ id, kind, description: description.trim().slice(0, MAX_GAP_DESCRIPTION) });
+    if (gaps.length === MAX_MISSING) break;
+  }
+  return gaps;
 }
 
 export async function analyzeWithOpenAI(
   request: AnalyzeRequest,
   options: { apiKey: string; model: string; catalog?: SoundCatalog; fetcher?: typeof fetch; timeoutMs?: number },
-): Promise<AnalyzeResult> {
+): Promise<Analysis> {
   const fetcher = options.fetcher ?? fetch;
   const catalog = options.catalog ?? BUNDLED_CATALOG;
   let response: Response;
@@ -163,7 +187,7 @@ export async function analyzeWithOpenAI(
           { role: "user", content: buildUserMessage(request) },
         ],
         temperature: 0,
-        max_tokens: 220,
+        max_tokens: 280,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(options.timeoutMs ?? 5000),

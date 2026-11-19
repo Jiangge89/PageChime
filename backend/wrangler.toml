@@ -34,6 +34,14 @@ name = "AUTH_LIMITER"
 namespace_id = "1002"
 simple = { limit = 20, period = 60 }
 
+# Sounds stories asked for that the library lacks (see src/gaps.ts and
+# scripts/plan-batch.mjs). Tables are created on first use.
+[[d1_databases]]
+binding = "GAPS"
+database_name = "pagechime-gaps"
+# Replace with the id printed by `npx wrangler d1 create pagechime-gaps`.
+database_id = "00000000-0000-0000-0000-000000000000"
+
 # Sound library: library.json and sounds/<file>.m4a (see scripts/build-library.mjs).
 [[r2_buckets]]
 binding = "SOUNDS"

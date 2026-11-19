@@ -81,6 +81,28 @@ describe("sanitizeResult", () => {
     expect(sanitizeResult(JSON.stringify({ sounds: [], upcoming: many })).upcoming).toHaveLength(6);
   });
 
+  it("keeps well-formed missing sounds the catalog lacks, at most two", () => {
+    const result = sanitizeResult(
+      JSON.stringify({
+        sounds: [],
+        missing: [
+          { id: "dog_bark", kind: "oneShot", description: "already exists" },
+          { id: "Bad Id", kind: "oneShot", description: "x" },
+          { id: "lion_roar", kind: "music", description: "x" },
+          { id: "lion_roar", kind: "oneShot", description: "" },
+          { id: "seal_bark", kind: "oneShot", description: "  a seal barking  " },
+          { id: "jungle_ambience", kind: "ambience", description: "x".repeat(300) },
+          { id: "cricket_chirp", kind: "oneShot", description: "a cricket chirping" },
+        ],
+      }),
+    );
+    expect(result.missing).toEqual([
+      { id: "seal_bark", kind: "oneShot", description: "a seal barking" },
+      { id: "jungle_ambience", kind: "ambience", description: "x".repeat(120) },
+    ]);
+    expect(sanitizeResult(JSON.stringify({ sounds: [] })).missing).toEqual([]);
+  });
+
   it("throws on invalid JSON", () => {
     expect(() => sanitizeResult("not json")).toThrow(UpstreamError);
   });
@@ -93,7 +115,7 @@ describe("analyzeWithOpenAI", () => {
       { text: "an owl", context: "night" },
       { apiKey: "key", model: "gpt-4o-mini", fetcher },
     );
-    expect(result).toEqual({ sounds: [{ id: "owl_hoot", trigger: "owl" }], ambience: null, upcoming: [] });
+    expect(result).toEqual({ sounds: [{ id: "owl_hoot", trigger: "owl" }], ambience: null, upcoming: [], missing: [] });
 
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/chat/completions");

@@ -78,7 +78,7 @@ Speech, playback and analysis are injected via protocols (`SpeechRecognizing`, `
 
 - **No accounts.** There is no login. The PageChime API identifies a device only by an anonymous App Attest key.
 - **Transcript text goes through the PageChime API to OpenAI.** Newly recognized text snippets (plus ~300 characters of preceding story) are sent to the PageChime API on Cloudflare, which forwards them to OpenAI for sound matching and returns the result. The API does not store or log the text. Audio is never sent. Without a configured backend URL, the app uses fully local keyword matching.
-- **The API stores only App Attest keys:** each device's attested public key and signature counter, in Cloudflare KV.
+- **The API stores App Attest keys and sound gaps.** Each device's attested public key and signature counter go in Cloudflare KV. When a story calls for a sound the library lacks, the model's short description of it (e.g. "a witch cackling") is counted in Cloudflare D1, with a hashed device ID so one reader counts once. The reader's text itself is never stored.
 - **Cloud sounds are cached on device** in `Library/Caches/SoundLibrary` (up to 200 MB; iOS may purge it), with the library manifest in `Application Support/SoundLibrary`.
 - **Learned phrases are stored on device.** `SoundCache` persists short trigger phrases (e.g. "the dog barked") and their sound IDs to `Documents/sound_cache.json`. Full transcripts are not saved.
 - **Live transcript and debug logs are in memory only** and are cleared when the session stops or the app terminates.
@@ -122,6 +122,7 @@ Debug builds talk to `http://localhost:8787` (`PAGECHIME_BACKEND_URL` in `projec
 cd backend
 npx wrangler login
 npx wrangler kv namespace create DEVICE_KEYS   # copy the id into wrangler.toml
+npx wrangler d1 create pagechime-gaps          # copy the database_id into wrangler.toml
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put TOKEN_SECRET           # any long random string
 npm run deploy
@@ -186,7 +187,7 @@ Batches of new sounds are generated from a prompt list such as `backend/library/
 cd backend
 node scripts/generate-sounds.mjs library/batches/test-1.json --dry-run   # count variants and credits
 node scripts/generate-sounds.mjs library/batches/test-1.json             # generate and check
-node scripts/build-library.mjs library-src/test-1 --upload local
+node scripts/build-library.mjs library-src/* --upload local       # every batch folder → one library
 ```
 
 Each sound gets several variants, and the app picks a different one each time it plays, so repeated sounds don't feel canned. There is no manual review step: every variant is checked automatically (`scripts/audio-qc.mjs`) and the results go to `qc.json`.
@@ -195,6 +196,22 @@ Each sound gets several variants, and the app picks a different one each time it
 - **Kept with a warning**: very quiet (normalizing adds a lot of gain), clipping, a late start, or an ambience loop whose first and last seconds differ a lot. `review.html` lists only these, for an optional listen.
 
 Runs are resumable: existing files are never generated twice. `--check-only` reruns the checks without calling ElevenLabs. Sound Effects cost 40 credits per second of audio; the 13-sound test batch (34 variants) used about 14,800 credits and comes to about 7 MB in the library. The app downloads variants only as they are needed, into a 200 MB cache.
+
+`build-library.mjs` takes any number of source folders. A sound in several of them gets all their variants (and the description from the last), so a later batch can add variants to an existing sound.
+
+### Growing the Library from What Stories Ask For
+
+When the new text calls for a sound no catalog entry fits (a witch cackling, penguins waddling), the analysis model reports it as `missing`, and the API counts it in the `GAPS` D1 database: how often it was asked for and by how many devices. The app never sees this list.
+
+```bash
+cd backend
+node scripts/plan-batch.mjs --dry-run              # most wanted gaps (local D1; --remote for production)
+node scripts/plan-batch.mjs                        # write library/batches/gaps-<date>.json
+node scripts/generate-sounds.mjs library/batches/gaps-<date>.json
+node scripts/build-library.mjs library-src/* --upload remote
+```
+
+`plan-batch.mjs` keeps gaps reported by at least 2 devices (`--min-devices`), at most 20 per batch (`--limit`), and skips anything already bundled, built or planned. It then has `gpt-4o` write each ElevenLabs prompt, description, category and length, and drop gaps that an existing sound already covers or that don't suit young children. A batch file is plain JSON, so it can be edited before generating.
 
 ## How to Add a Bundled Sound
 

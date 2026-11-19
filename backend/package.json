@@ -6,7 +6,10 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "library:plan": "node scripts/plan-batch.mjs",
+    "library:generate": "node scripts/generate-sounds.mjs",
+    "library:build": "node scripts/build-library.mjs library-src/*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261119.1",
