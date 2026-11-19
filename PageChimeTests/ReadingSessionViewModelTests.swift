@@ -300,6 +300,74 @@ final class ReadingSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.pageStatus, .none)
     }
 
+    func testPageSummaryNumbersPagesAndCountsTheStory() async throws {
+        addCloudWolfAndCave()
+        viewModel.beginStory()
+        pages.result = PageAnalysis(
+            cues: [LLMSoundMatch(id: "wolf_howl", trigger: "the wolf howled at the moon"),
+                   LLMSoundMatch(id: "cave_drips", trigger: "into the dark cave")],
+            ambience: nil, upcoming: []
+        )
+        await viewModel.loadPage(text: "The wolf howled at the moon.")
+
+        XCTAssertEqual(viewModel.page?.number, 1)
+        XCTAssertEqual(viewModel.page?.text, "The wolf howled at the moon.")
+        XCTAssertEqual(viewModel.page?.cues.map(\.soundID), ["wolf_howl", "cave_drips"])
+        XCTAssertEqual(viewModel.page?.cues.map(\.isAmbience), [false, true])
+        XCTAssertEqual(viewModel.firedCueCount, 0)
+
+        llm.close()
+        speech.send("Far away the wolf howled at the moon")
+        try await waitUntil(timeout: 0.5) { self.viewModel.firedCueCount == 1 }
+        XCTAssertEqual(viewModel.story?.soundIDs, ["wolf_howl"])
+        XCTAssertEqual(viewModel.recentEffects.first?.soundID, "wolf_howl")
+
+        await viewModel.loadPage(text: "The wolf howled at the moon, again.", replacing: true)
+        XCTAssertEqual(viewModel.page?.number, 1, "A rescan replaces the page")
+        XCTAssertEqual(viewModel.firedCueCount, 0)
+        await viewModel.loadPage(text: "Page two")
+        XCTAssertEqual(viewModel.page?.number, 2)
+        XCTAssertEqual(viewModel.story?.pages, 2)
+
+        viewModel.resetStory()
+        XCTAssertNil(viewModel.story)
+        XCTAssertNil(viewModel.page)
+    }
+
+    func testPauseKeepsPlayedCuesAndResumeDoesNotReplayThem() async throws {
+        addCloudWolfAndCave()
+        pages.result = PageAnalysis(
+            cues: [LLMSoundMatch(id: "wolf_howl", trigger: "the wolf howled at the moon")], ambience: nil, upcoming: []
+        )
+        await viewModel.loadPage(text: "page text")
+        llm.close()
+        speech.send("the wolf howled at the moon")
+        try await waitUntil(timeout: 0.5) { self.player.playedIDs.contains("wolf_howl") }
+
+        viewModel.pauseReading()
+        XCTAssertTrue(viewModel.isPaused)
+        XCTAssertEqual(viewModel.state, .ready)
+        XCTAssertEqual(viewModel.firedCueCount, 1)
+
+        viewModel.resumeReading()
+        try await waitUntil { self.viewModel.state == .listening }
+        XCTAssertFalse(viewModel.isPaused)
+        speech.send("the wolf howled at the moon")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(player.playedIDs.filter { $0 == "wolf_howl" }.count, 1, "Resuming doesn't replay the page")
+
+        viewModel.endStory()
+        XCTAssertEqual(viewModel.state, .ready)
+    }
+
+    func testSceneIsPublishedAndClearedOnStop() async throws {
+        llm.responder = { _ in SoundAnalysis(sounds: [], ambience: ["rain_light"]) }
+        speech.send("It began to rain softly on the little house that night")
+        try await waitUntil { self.viewModel.sceneIDs == ["rain_light"] }
+        viewModel.pauseReading()
+        XCTAssertEqual(viewModel.sceneIDs, [])
+    }
+
     func testSpeechActivityIsReportedForDucking() async throws {
         speech.send("Once upon a time")
         try await waitUntil { self.player.speechActivityCount > 0 }

@@ -14,16 +14,17 @@ PageChime enhances parent-child reading by listening to a parent's narration and
 - One-shot variation: slight random pitch and level on every play, and overlapping playback
 - Proximity-based negation detection in the keyword path (e.g. "There was no frog" / "没有青蛙" → no sound); English keywords must start a word ("then" ≠ "hen")
 - Unified 3-second per-sound cooldown to suppress repeats
-- Bilingual UI that follows the selected reading language
-- In-app debug panel showing each analysis: input text, method (Cache / LLM / Keyword / No Match), wait and analysis latency, and matched sounds
+- A night-time reading flow: **Home** (scan the first page, or read without scanning) → **Page scanned** (the page text with its trigger words highlighted, and the sounds that are ready) → **Reading** (a dark, dimmed "theatre" screen whose glow follows the scene, with the latest sound, the page's cue progress, pause and next page) → **The end** (minutes, pages and sounds for the story)
+- Bilingual UI that follows the selected reading language; language, volume, screen dimming and the debug log live in Settings
+- Debug log (Settings) showing each analysis: input text, method (Cache / LLM / Keyword / Page / No Match), wait and analysis latency, and matched sounds
 
 ## Architecture
 
 ```
 ┌────────────────────────────────┐
 │        ContentView (UI)        │
-│  language · status · volume ·  │
-│  recent effects · debug log    │
+│ home · page scanned · reading ·│
+│ the end · settings + debug log │
 └──────────────┬─────────────────┘
                │
 ┌──────────────▼─────────────────┐
@@ -60,8 +61,8 @@ PageChime enhances parent-child reading by listening to a parent's narration and
 | `TriggerLibrary` | Bilingual keyword-to-sound mappings (English + Chinese); also supplies Speech contextual strings |
 | `SoundEffectPlayer` | AVAudioEngine mixer: pooled one-shot voices with random pitch/level, up to 3 ambience beds, ducking under speech. Bundled sounds are pre-decoded; cloud one-shots are decoded on first use, cloud ambience streams from its file with a crossfaded loop. Missing cloud sounds are downloaded: one-shots play only if that takes under 1.5s, ambience starts if the scene still wants it |
 | `SoundLibrary` | Cloud library client: fetches `/v1/library` (ETag-cached, stored for offline use), downloads `/v1/sounds/<file>` into a 200 MB LRU cache, picks variants, and describes cloud sounds to the view model and player |
-| `ReadingSessionViewModel` | Runs the instant keyword path, dispatches cache/LLM segments, applies scenes, owns transient UI state and the debug log |
-| `ContentView` | SwiftUI interface with calm children's-book visual style |
+| `ReadingSessionViewModel` | Runs the instant keyword path, dispatches cache/LLM segments, applies scenes, arms scanned-page cues, tracks the story (pages, sounds, pause/resume) and the debug log |
+| `ContentView` | Switches between `HomeView`, `PageReadyView`, `ReadingView` and `RecapView`, and presents the scanner and `SettingsView`. Night palette and New York serif headings (`Theme`) |
 
 Speech, playback and analysis are injected via protocols (`SpeechRecognizing`, `SoundEffectPlaying`, `SoundMatching`) for testability.
 
@@ -72,11 +73,11 @@ Speech, playback and analysis are injected via protocols (`SpeechRecognizing`, `
 3. **Cache** (`SoundCache`): each segment is normalized and checked against trigger phrases learned from earlier LLM results; hits play instantly.
 4. **Scene LLM** (`BackendSoundMatcher` → PageChime API): every segment is also sent, via the backend, to `gpt-4o-mini` with the previous ~300 characters as context. It returns one-shot sounds for the new text and the ambience beds for the current scene (or `null` to keep the scene). Requests run concurrently and are never cancelled by newer speech.
 5. **Merging**: LLM one-shots already played by the keyword path for that text are skipped; one-shots arriving more than 4s late are dropped; ambience is always applied, since it follows the scene rather than a single word.
-6. **Prefetch**: the LLM also lists up to 6 `upcoming` sounds the story makes likely soon (the wolf once Red Riding Hood enters the forest, the giant once Jack climbs the beanstalk). `SoundLibrary` downloads one variant of each that isn't on disk yet, two at a time in the background, so cloud sounds are usually ready before the text reaches them. The debug panel shows what was prefetched.
+6. **Prefetch**: the LLM also lists up to 6 `upcoming` sounds the story makes likely soon (the wolf once Red Riding Hood enters the forest, the giant once Jack climbs the beanstalk). `SoundLibrary` downloads one variant of each that isn't on disk yet, two at a time in the background, so cloud sounds are usually ready before the text reaches them. The debug log (Settings) shows what was prefetched.
 
 ### Scanning the Page First
 
-Optionally, the parent scans the page before reading it (**Scan Page**: the document camera on a device, a photo picker in the simulator):
+Optionally, the parent scans the page before reading it (**Scan the first page**, then **Next page** while reading: the document camera on a device, a photo picker in the simulator):
 
 1. **Text recognition on device** (`VisionTextRecognizer`): Apple Vision reads the page (English, or Simplified Chinese plus English) in reading order. The photo never leaves the phone.
 2. **Page analysis** (`POST /v1/analyze-page`): the page text goes to the LLM once. It returns every sound cue in reading order with a 2-5 word trigger phrase copied from the page (the server drops any phrase that isn't really on the page), the opening ambience, and sounds for the following pages. About 2s and $0.0002 per page.
@@ -267,7 +268,7 @@ Add a case to `ReadingLanguage`, keyword arrays for it in each trigger entry's `
 
 ## Known Limitations
 
-- **Network latency for non-keyword sounds.** Sounds only the LLM recognizes wait on a backend + OpenAI round-trip (about 1–2s); one-shots later than 4s are dropped. The debug panel shows actual latency.
+- **Network latency for non-keyword sounds.** Sounds only the LLM recognizes wait on a backend + OpenAI round-trip (about 1–2s); one-shots later than 4s are dropped. The debug log (Settings) shows actual latency.
 - **App Attest on devices is untested so far.** The server-side verification is unit-tested against a synthetic certificate chain and the real Apple root parses, but no real device attestation has been verified yet.
 - **Cache matching is substring-based.** A learned phrase matches whenever it appears inside new text, regardless of context.
 - **Keyword matching is prefix-based.** English keywords must start a word, but "frogman" still matches "frog". Exclude patterns cover some Chinese cases (e.g. 牛奶 is not a cow).

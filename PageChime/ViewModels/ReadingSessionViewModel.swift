@@ -36,6 +36,32 @@ enum PageStatus: Equatable {
     case failed(String)
 }
 
+/// What the reader is shown about a scanned page: its text and its sounds.
+struct PageSummary: Equatable {
+    struct Cue: Equatable, Identifiable {
+        let soundID: String
+        /// The words on the page that start the sound.
+        let trigger: String
+        let isAmbience: Bool
+        let type: StoryEventType
+        var id: String { soundID + "|" + trigger }
+    }
+
+    let number: Int
+    let text: String
+    let cues: [Cue]
+}
+
+/// One story, from the first page to "The end".
+struct StoryProgress: Equatable {
+    var startedAt: Date
+    var endedAt: Date?
+    var pages = 0
+    var soundCount = 0
+    /// Each sound once, in the order it first played.
+    var soundIDs: [String] = []
+}
+
 /// A sound on the scanned page, set off when the reader says its phrase.
 private struct PageCue {
     let soundID: String
@@ -54,6 +80,15 @@ final class ReadingSessionViewModel: ObservableObject {
     @Published var volume: Float = 0.4
     @Published var analysisLogs: [AnalysisLog] = []
     @Published private(set) var pageStatus: PageStatus = .none
+    @Published private(set) var page: PageSummary?
+    /// How many of the page's cues have played in this reading.
+    @Published private(set) var firedCueCount = 0
+    @Published private(set) var isPaused = false
+    @Published private(set) var story: StoryProgress?
+    /// Ambience beds playing now.
+    @Published private(set) var sceneIDs: [String] = []
+    /// The latest one-shot sound (ambience shows in `sceneIDs` instead).
+    @Published private(set) var lastOneShot: StoryEvent?
 
     var currentTime: () -> Date = { Date() }
     var segmentPolicy: (ReadingLanguage) -> SegmentPolicy = SegmentPolicy.standard
@@ -151,12 +186,52 @@ final class ReadingSessionViewModel: ObservableObject {
         analysisLogs.removeAll()
     }
 
+    // MARK: - Story
+
+    func beginStory() {
+        if story == nil { story = StoryProgress(startedAt: currentTime()) }
+    }
+
+    /// Starts reading the current page from its beginning.
+    func startReading() {
+        beginStory()
+        isPaused = false
+        Task { await startSession(resetCues: true) }
+    }
+
+    /// Stops listening but keeps the story and which cues already played.
+    func pauseReading() {
+        guard isStartingOrListening else { return }
+        stopSession()
+        isPaused = true
+    }
+
+    func resumeReading() {
+        isPaused = false
+        Task { await startSession(resetCues: false) }
+    }
+
+    func endStory() {
+        if isStartingOrListening { stopSession() }
+        isPaused = false
+        story?.endedAt = currentTime()
+    }
+
+    /// Back to a blank slate for the next story.
+    func resetStory() {
+        if isStartingOrListening { stopSession() }
+        isPaused = false
+        story = nil
+        clearPage()
+    }
+
     // MARK: - Scanned Page
 
     var canScanPages: Bool { pageAnalyzer != nil }
 
     /// Reads the text on photographed pages, then finds their sound cues.
-    func scanPage(_ images: [UIImage]) async {
+    /// `replacing` rescans the current page instead of starting the next.
+    func scanPage(_ images: [UIImage], replacing: Bool = false) async {
         pageGeneration += 1
         let generation = pageGeneration
         pageStatus = .reading
@@ -167,7 +242,7 @@ final class ReadingSessionViewModel: ObservableObject {
                 pageStatus = .failed(language == .chinese ? "没有在照片里找到文字" : "No text found in the photo")
                 return
             }
-            await loadPage(text: text, generation: generation)
+            await loadPage(text: text, generation: generation, replacing: replacing)
         } catch {
             guard generation == pageGeneration else { return }
             pageStatus = .failed(error.localizedDescription)
@@ -175,12 +250,12 @@ final class ReadingSessionViewModel: ObservableObject {
     }
 
     /// Sends a page's text for analysis and arms its cues.
-    func loadPage(text: String) async {
+    func loadPage(text: String, replacing: Bool = false) async {
         pageGeneration += 1
-        await loadPage(text: text, generation: pageGeneration)
+        await loadPage(text: text, generation: pageGeneration, replacing: replacing)
     }
 
-    private func loadPage(text: String, generation: Int) async {
+    private func loadPage(text: String, generation: Int, replacing: Bool) async {
         guard let pageAnalyzer else {
             pageStatus = .failed("Page scanning needs the PageChime server")
             return
@@ -200,9 +275,26 @@ final class ReadingSessionViewModel: ObservableObject {
         guard generation == pageGeneration else { return }
 
         let cues = analysis.cues.filter { catalog.info(for: $0.id) != nil }
-        pageCues = cues.compactMap { Self.makeCue($0, language: pageLanguage) }
+        var armed: [PageCue] = []
+        var shown: [PageSummary.Cue] = []
+        for match in cues {
+            guard let cue = Self.makeCue(match, language: pageLanguage), let info = catalog.info(for: match.id) else { continue }
+            armed.append(cue)
+            shown.append(PageSummary.Cue(soundID: match.id, trigger: match.trigger, isAmbience: info.isAmbience, type: info.type))
+        }
+        pageCues = armed
+        firedCueCount = 0
         let isAmbience = { (id: String) in self.catalog.info(for: id)?.isAmbience == true }
         pageAmbience = analysis.ambience?.filter(isAmbience)
+
+        let number: Int
+        if replacing, let current = page {
+            number = current.number
+        } else {
+            number = (story?.pages ?? 0) + 1
+            story?.pages = number
+        }
+        page = PageSummary(number: number, text: text, cues: shown)
 
         // Everything this page and the next ones need, downloaded before it's read.
         let upcoming = analysis.upcoming.filter { catalog.info(for: $0) != nil }
@@ -228,6 +320,8 @@ final class ReadingSessionViewModel: ObservableObject {
         pageCues = []
         pageAmbience = nil
         pageStatus = .none
+        page = nil
+        firedCueCount = 0
         speechService.contextualStrings = TriggerLibrary.contextualStrings(for: language)
     }
 
@@ -263,6 +357,7 @@ final class ReadingSessionViewModel: ObservableObject {
                 played.append(soundID)
             }
         }
+        firedCueCount = pageCues.filter(\.fired).count
         if !played.isEmpty {
             appendLog(text: String(text.suffix(60)), method: .page, waitMs: 0, analysisMs: 0, soundIDs: played)
         }
@@ -270,7 +365,7 @@ final class ReadingSessionViewModel: ObservableObject {
 
     // MARK: - Session Lifecycle
 
-    private func startSession() async {
+    private func startSession(resetCues: Bool = true) async {
         guard state == .ready || state == .permissionRequired || state.isError else { return }
         state = .starting
         sessionID &+= 1
@@ -281,8 +376,11 @@ final class ReadingSessionViewModel: ObservableObject {
             return
         }
 
-        // Reading the page again plays its cues again.
-        for index in pageCues.indices { pageCues[index].fired = false }
+        // Reading the page again plays its cues again; resuming doesn't.
+        if resetCues {
+            for index in pageCues.indices { pageCues[index].fired = false }
+            firedCueCount = 0
+        }
 
         do {
             if pageCues.isEmpty {
@@ -311,6 +409,9 @@ final class ReadingSessionViewModel: ObservableObject {
         cooldowns.removeAll()
         lastPlayedPosition.removeAll()
         currentScene.removeAll()
+        sceneIDs = []
+        lastOneShot = nil
+        state = .ready
         transcript = ""
         recentEffects = []
         keywordScannedLength = 0
@@ -546,6 +647,7 @@ final class ReadingSessionViewModel: ObservableObject {
             addRecentEffect(event)
         }
         currentScene = soundIDs
+        sceneIDs = soundIDs.sorted()
     }
 
     /// Plays a sound found by cache/LLM unless the keyword path already
@@ -569,6 +671,7 @@ final class ReadingSessionViewModel: ObservableObject {
 
         soundPlayer.play(event: event)
         addRecentEffect(event)
+        if catalog.info(for: soundID)?.isAmbience != true { lastOneShot = event }
         cooldowns[soundID] = now
         lastPlayedPosition[soundID] = position
         return true
@@ -608,6 +711,10 @@ final class ReadingSessionViewModel: ObservableObject {
     }
 
     private func addRecentEffect(_ event: StoryEvent) {
+        story?.soundCount += 1
+        if story?.soundIDs.contains(event.soundID) == false {
+            story?.soundIDs.append(event.soundID)
+        }
         recentEffects.insert(event, at: 0)
         if recentEffects.count > 3 {
             recentEffects = Array(recentEffects.prefix(3))

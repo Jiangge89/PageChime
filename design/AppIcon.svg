@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="1024" height="1024">
+  <!-- PageChime app icon ("Spotlight"): an open book on a lit stage.
+       Full-bleed square; iOS applies the rounded mask itself.
+       Render (opaque 1024 PNG):
+         rsvg-convert -w 1024 -h 1024 design/AppIcon.svg | ffmpeg -y -i - -pix_fmt rgb24 \
+           PageChime/Assets.xcassets/AppIcon.appiconset/AppIcon.png -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25336B"/>
+      <stop offset="1" stop-color="#0E1430"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7C873" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#F2B45A" stop-opacity="0.08"/>
+    </linearGradient>
+    <radialGradient id="pool" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#F7C873" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#F2B45A" stop-opacity="0.12"/>
+    </radialGradient>
+  </defs>
+  <rect width="100" height="100" fill="url(#bg)"/>
+  <path d="M5 70 A45 13 0 0 0 95 70 L95 80 A45 13 0 0 1 5 80 Z" fill="#2A3770"/>
+  <polygon points="42,0 58,0 92,70 8,70" fill="url(#beam)"/>
+  <ellipse cx="50" cy="70" rx="45" ry="13" fill="url(#pool)"/>
+  <path d="M50 76 C41 70.5 30 70.5 20 72.5 L20 51 C30 48.5 41 48.5 50 54 Z" fill="#F6EEDC"/>
+  <path d="M50 76 C59 70.5 70 70.5 80 72.5 L80 51 C70 48.5 59 48.5 50 54 Z" fill="#E9DEC6"/>
+  <path d="M78 14 L79.6 18.4 L84 20 L79.6 21.6 L78 26 L76.4 21.6 L72 20 L76.4 18.4 Z" fill="#FFF3DA"/>
+</svg>
