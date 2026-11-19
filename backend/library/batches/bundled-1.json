@@ -1,0 +1,492 @@
+[
+  {
+    "id": "frog_croak",
+    "kind": "oneShot",
+    "name": "frog croaking",
+    "category": "animal",
+    "description": "frog croaking",
+    "prompt": "A small pond frog croaking a few times, ribbit ribbit, close up with a little water ambience. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "dog_bark",
+    "kind": "oneShot",
+    "name": "dog barking",
+    "category": "animal",
+    "description": "dog barking",
+    "prompt": "A friendly medium-sized dog barking two or three times, alert but not aggressive, close up outdoors. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "cat_meow",
+    "kind": "oneShot",
+    "name": "cat meowing",
+    "category": "animal",
+    "description": "cat meowing",
+    "prompt": "A house cat meowing softly once or twice, sweet and curious, close up. No music, no voices.",
+    "variants": 3,
+    "duration": 1.5
+  },
+  {
+    "id": "cow_moo",
+    "kind": "oneShot",
+    "name": "cow mooing",
+    "category": "animal",
+    "description": "cow mooing",
+    "prompt": "A cow mooing one long low moo in a farm field, natural and warm. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "sheep_baa",
+    "kind": "oneShot",
+    "name": "sheep bleating",
+    "category": "animal",
+    "description": "sheep bleating",
+    "prompt": "A sheep bleating baa a couple of times in a meadow, gentle and close. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "lion_roar",
+    "kind": "oneShot",
+    "name": "lion roaring",
+    "category": "animal",
+    "description": "lion roaring",
+    "prompt": "A lion giving one big powerful roar on the savanna, impressive but suitable for a children's story, wide stereo. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "elephant_trumpet",
+    "kind": "oneShot",
+    "name": "elephant trumpeting",
+    "category": "animal",
+    "description": "elephant trumpeting",
+    "prompt": "An elephant raising its trunk and trumpeting loudly once, bright brassy call, open savanna. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "bird_chirp",
+    "kind": "oneShot",
+    "name": "small bird chirping",
+    "category": "animal",
+    "description": "small bird chirping",
+    "prompt": "A small songbird chirping and tweeting a cheerful short phrase, close up in a garden. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "owl_hoot",
+    "kind": "oneShot",
+    "name": "owl hooting",
+    "category": "animal",
+    "description": "owl hooting",
+    "prompt": "An owl hooting softly, hoo hoo, in a quiet night forest with gentle reverb. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "duck_quack",
+    "kind": "oneShot",
+    "name": "duck quacking",
+    "category": "animal",
+    "description": "duck quacking",
+    "prompt": "A duck quacking a few times by a pond, playful and close. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "chicken_cluck",
+    "kind": "oneShot",
+    "name": "chicken clucking",
+    "category": "animal",
+    "description": "chicken clucking",
+    "prompt": "A hen clucking and bocking busily in a farmyard, close up. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "horse_neigh",
+    "kind": "oneShot",
+    "name": "horse neighing",
+    "category": "animal",
+    "description": "horse neighing",
+    "prompt": "A horse neighing and whinnying once with a soft snort, outdoors on a farm. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "squirrel_chirp",
+    "kind": "oneShot",
+    "name": "squirrel chattering",
+    "category": "animal",
+    "description": "squirrel chattering",
+    "prompt": "A squirrel chattering and squeaking quickly in a tree, small and lively. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "dinosaur_roar",
+    "kind": "oneShot",
+    "name": "dinosaur roaring",
+    "category": "animal",
+    "description": "dinosaur roaring",
+    "prompt": "A huge dinosaur roaring, deep prehistoric bellow with a rumble, epic but friendly enough for children, wide stereo. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "whale_call",
+    "kind": "oneShot",
+    "name": "whale song",
+    "category": "animal",
+    "description": "whale song",
+    "prompt": "A humpback whale singing a long haunting call deep under the ocean, watery and spacious. No music, no voices.",
+    "variants": 3,
+    "duration": 4
+  },
+  {
+    "id": "tiger_roar",
+    "kind": "oneShot",
+    "name": "tiger roaring",
+    "category": "animal",
+    "description": "tiger roaring",
+    "prompt": "A tiger growling and roaring once in the jungle, powerful but not gory. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "monkey_call",
+    "kind": "oneShot",
+    "name": "monkey chattering",
+    "category": "animal",
+    "description": "monkey chattering",
+    "prompt": "A playful monkey hooting and chattering excitedly in the jungle canopy. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "fox_bark",
+    "kind": "oneShot",
+    "name": "fox barking",
+    "category": "animal",
+    "description": "fox barking",
+    "prompt": "A red fox giving a few short high yips and barks at night in the woods. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "zebra_call",
+    "kind": "oneShot",
+    "name": "zebra calling",
+    "category": "animal",
+    "description": "zebra calling",
+    "prompt": "A zebra braying and barking its distinctive call on the open savanna. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "giraffe_hum",
+    "kind": "oneShot",
+    "name": "giraffe humming",
+    "category": "animal",
+    "description": "giraffe humming",
+    "prompt": "A giraffe making a soft low humming and snorting sound, calm and gentle, open savanna. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "mouse_squeak",
+    "kind": "oneShot",
+    "name": "mouse squeaking",
+    "category": "animal",
+    "description": "mouse squeaking",
+    "prompt": "A tiny mouse squeaking a few times, small and cute, close up. No music, no voices.",
+    "variants": 3,
+    "duration": 1.5
+  },
+  {
+    "id": "door_knock",
+    "kind": "oneShot",
+    "name": "knocking on a door",
+    "category": "action",
+    "description": "knocking on a door",
+    "prompt": "Three firm knocks on a wooden front door, knock knock knock, close and clear. No music, no voices.",
+    "variants": 3,
+    "duration": 1.5
+  },
+  {
+    "id": "door_open",
+    "kind": "oneShot",
+    "name": "door opening",
+    "category": "object",
+    "description": "door opening",
+    "prompt": "A wooden door opening smoothly with a soft latch click and a short swing, indoors. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "footsteps",
+    "kind": "oneShot",
+    "name": "footsteps walking",
+    "category": "action",
+    "description": "footsteps walking",
+    "prompt": "Footsteps of a person walking at a calm pace on a wooden floor, about six steps. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "running",
+    "kind": "oneShot",
+    "name": "running footsteps",
+    "category": "action",
+    "description": "running footsteps",
+    "prompt": "Quick running footsteps on a dirt path, a child-sized runner hurrying past. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "water_splash",
+    "kind": "oneShot",
+    "name": "water splash",
+    "category": "action",
+    "description": "water splash",
+    "prompt": "A big splash of something jumping into a pond, water spraying and settling. No music, no voices.",
+    "variants": 3,
+    "duration": 2
+  },
+  {
+    "id": "bell",
+    "kind": "oneShot",
+    "name": "bell ringing",
+    "category": "object",
+    "description": "bell ringing",
+    "prompt": "A small bright bell ringing a few times, clear and cheerful with a gentle ring-out. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "clock_tick",
+    "kind": "oneShot",
+    "name": "clock ticking",
+    "category": "object",
+    "description": "clock ticking",
+    "prompt": "A mechanical wall clock ticking steadily and fairly loudly, continuous tick tock with the gears' soft ring in a quiet wooden room, no gaps. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "laughter",
+    "kind": "oneShot",
+    "name": "child laughing",
+    "category": "action",
+    "description": "child laughing",
+    "prompt": "A young child giggling and laughing happily, warm and joyful, no words.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "door_slam",
+    "kind": "oneShot",
+    "name": "door slamming",
+    "category": "action",
+    "description": "door slamming",
+    "prompt": "A heavy wooden door slamming shut with a loud bang and a short rattle, indoors. No music, no voices.",
+    "variants": 3,
+    "duration": 1.5
+  },
+  {
+    "id": "child_crying",
+    "kind": "oneShot",
+    "name": "child crying",
+    "category": "action",
+    "description": "child crying",
+    "prompt": "A small child crying and sobbing softly, sad but not distressing, no words.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "waves_crashing",
+    "kind": "oneShot",
+    "name": "wave crashing",
+    "category": "action",
+    "description": "wave crashing",
+    "prompt": "A single ocean wave rolling in and crashing on the shore, then foamy water receding. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "children_playing",
+    "kind": "oneShot",
+    "name": "children playing",
+    "category": "action",
+    "description": "children playing",
+    "prompt": "Children playing happily in a playground, distant laughter and cheerful shouts without clear words, outdoors.",
+    "variants": 3,
+    "duration": 4
+  },
+  {
+    "id": "car",
+    "kind": "oneShot",
+    "name": "car driving by",
+    "category": "vehicle",
+    "description": "car driving by",
+    "prompt": "A car driving past on a quiet street, engine hum rising and fading with tyre noise. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "train",
+    "kind": "oneShot",
+    "name": "train passing",
+    "category": "vehicle",
+    "description": "train passing",
+    "prompt": "A steam train chugging along the tracks with a cheerful whistle, rhythmic clackety-clack. No music, no voices.",
+    "variants": 3,
+    "duration": 4
+  },
+  {
+    "id": "airplane",
+    "kind": "oneShot",
+    "name": "airplane flying over",
+    "category": "vehicle",
+    "description": "airplane flying over",
+    "prompt": "A jet airplane flying overhead, rising roar passing across the sky and fading away, wide stereo. No music, no voices.",
+    "variants": 3,
+    "duration": 4
+  },
+  {
+    "id": "helicopter",
+    "kind": "oneShot",
+    "name": "helicopter",
+    "category": "vehicle",
+    "description": "helicopter",
+    "prompt": "A helicopter hovering and flying past, thumping rotor blades and engine whine. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "boat",
+    "kind": "oneShot",
+    "name": "rowing boat",
+    "category": "vehicle",
+    "description": "rowing boat",
+    "prompt": "A small wooden rowing boat on calm water, oars splashing and creaking rhythmically. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "ship_horn",
+    "kind": "oneShot",
+    "name": "ship horn",
+    "category": "vehicle",
+    "description": "ship horn",
+    "prompt": "A big ship sounding its deep foghorn once across the harbour, long and booming. No music, no voices.",
+    "variants": 3,
+    "duration": 3
+  },
+  {
+    "id": "bus",
+    "kind": "oneShot",
+    "name": "bus stopping",
+    "category": "vehicle",
+    "description": "bus stopping",
+    "prompt": "A city bus pulling up to a stop with a hiss of air brakes and doors opening. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "subway",
+    "kind": "oneShot",
+    "name": "subway train",
+    "category": "vehicle",
+    "description": "subway train",
+    "prompt": "An underground subway train rushing into a station, rumbling and screeching to a stop. No music, no voices.",
+    "variants": 3,
+    "duration": 4
+  },
+  {
+    "id": "tractor",
+    "kind": "oneShot",
+    "name": "tractor",
+    "category": "vehicle",
+    "description": "tractor",
+    "prompt": "An old farm tractor chugging along a field, diesel engine putt-putt rhythm. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "bulldozer",
+    "kind": "oneShot",
+    "name": "bulldozer",
+    "category": "vehicle",
+    "description": "bulldozer",
+    "prompt": "A bulldozer engine roaring and its tracks clanking as it pushes dirt on a building site. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "harvester",
+    "kind": "oneShot",
+    "name": "combine harvester",
+    "category": "vehicle",
+    "description": "combine harvester",
+    "prompt": "A combine harvester working in a wheat field, steady engine drone and whirring cutting machinery. No music, no voices.",
+    "variants": 3,
+    "duration": 4
+  },
+  {
+    "id": "drill",
+    "kind": "oneShot",
+    "name": "power drill",
+    "category": "vehicle",
+    "description": "power drill",
+    "prompt": "A power drill whirring and drilling into wood in short bursts. No music, no voices.",
+    "variants": 3,
+    "duration": 2.5
+  },
+  {
+    "id": "excavator",
+    "kind": "oneShot",
+    "name": "excavator digging",
+    "category": "vehicle",
+    "description": "excavator digging",
+    "prompt": "An excavator digging, hydraulic whine, engine revving and a scoop of rocks and dirt. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "police_siren",
+    "kind": "oneShot",
+    "name": "police siren",
+    "category": "vehicle",
+    "description": "police siren",
+    "prompt": "A police car siren wailing as it drives past, classic wee-woo, wide stereo. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "ambulance_siren",
+    "kind": "oneShot",
+    "name": "ambulance siren",
+    "category": "vehicle",
+    "description": "ambulance siren",
+    "prompt": "An ambulance siren wailing as it rushes past, urgent rising and falling tone, wide stereo. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  },
+  {
+    "id": "fire_truck_siren",
+    "kind": "oneShot",
+    "name": "fire truck siren",
+    "category": "vehicle",
+    "description": "fire truck siren",
+    "prompt": "A fire engine with its siren wailing and a loud horn blast as it races past. No music, no voices.",
+    "variants": 3,
+    "duration": 3.5
+  }
+]

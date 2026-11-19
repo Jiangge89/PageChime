@@ -8,7 +8,7 @@ PageChime enhances parent-child reading by listening to a parent's narration and
 - Live speech recognition (English and Simplified Chinese)
 - Two-speed analysis: an **instant local keyword path** on every partial transcript, plus a **scene-aware LLM** (with a learned phrase cache) for sounds keywords miss and for the scene's ambience
 - A small Cloudflare Worker backend (`backend/`) holds the OpenAI key and only serves genuine copies of the app (App Attest)
-- 58 bundled bilingual sound effects across animals, weather, vehicles, machines, actions, and environments, plus a **cloud sound library** (R2) whose sounds the LLM can choose; they are downloaded on demand into a 200 MB on-device cache
+- 58 bundled bilingual sound effects across animals, weather, vehicles, machines, actions, and environments, all generated with ElevenLabs (44.1 kHz stereo; background sounds are 30s loops). Each is the first variant of a **cloud sound library** (R2) sound: the bundled copy plays at once, offline too, and the other variants download for variety. The library also holds sounds only the LLM can choose; everything is downloaded on demand into a 200 MB on-device cache
 - Cloud sounds are 44.1 kHz stereo with several variants each (never the same variant twice in a row); cloud ambience streams from disk and loops with an equal-power crossfade
 - Layered ambience: up to 3 looping beds (e.g. storm + rain) that fade with the scene, hold while it lasts, and duck under the reader's voice
 - One-shot variation: slight random pitch and level on every play, and overlapping playback
@@ -257,7 +257,7 @@ node scripts/build-library.mjs library-src/* --upload remote
 
 ## How to Add a Bundled Sound
 
-1. Place a WAV file in `PageChime/Resources/Sounds/` (e.g. `wolf_howl.wav`) and regenerate the project (`xcodegen generate`).
+1. Generate the sound into the cloud library (see [Generating Sounds with ElevenLabs](#generating-sounds-with-elevenlabs)), then copy its first variant from `backend/library-dist/sounds/` to `PageChime/Resources/Sounds/<sound_id>.m4a` and regenerate the project (`xcodegen generate`). Bundled files play through the same full-quality path as cloud files; ambience streams with the crossfaded loop.
 2. Add a `TriggerEntry` in `PageChime/Services/TriggerLibrary.swift`:
 
 ```swift
@@ -277,7 +277,7 @@ TriggerEntry(
 ```
 
 3. Add the sound ID and a short description to `CATALOG` in `backend/src/catalog.ts` (mark ambience with `ambience: true`) and redeploy the backend, so the LLM can return it.
-4. Document the source and licence in `Resources/Sounds/ATTRIBUTION.md`.
+4. Note where it came from in `Resources/Sounds/ATTRIBUTION.md` if it isn't generated.
 
 Steps 2 and 3 are both required for a bundled sound: LLM results are only played if the app knows the ID, from `TriggerLibrary` or the cloud library (so older app versions safely ignore IDs they don't know), and the keyword fallback only knows sounds in `TriggerLibrary`. (`cooldownSeconds` on `TriggerEntry` is currently unused; a unified 3s cooldown applies.)
 
@@ -291,7 +291,6 @@ Add a case to `ReadingLanguage`, keyword arrays for it in each trigger entry's `
 - **App Attest on devices is untested so far.** The server-side verification is unit-tested against a synthetic certificate chain and the real Apple root parses, but no real device attestation has been verified yet.
 - **Cache matching is substring-based.** A learned phrase matches whenever it appears inside new text, regardless of context.
 - **Keyword matching is prefix-based.** English keywords must start a word, but "frogman" still matches "frog". Exclude patterns cover some Chinese cases (e.g. 牛奶 is not a cow).
-- **Bundled sounds are short and single-variant.** The 58 bundled files are mono 22 kHz with ~6s ambience loops, and their source and licence are unverified, so they stay bundled and are not uploaded to the cloud library. Cloud sounds fix this, but the library is empty until sounds are added.
 - **The LLM prompt lists every sound.** Fine for hundreds of sounds; a much larger library needs description-based retrieval.
 - **First use of a cloud sound may wait for a download.** Prefetch usually gets there first, but a sound the LLM didn't foresee is downloaded when first needed; one-shots that take more than 1.5s are skipped (and cached for next time).
 - **Keyword negation only looks before the keyword.** The keyword engine checks ~15 characters (English) or 5 characters (Chinese) before a keyword. "There was no frog" is suppressed, but "The frog did not croak" still triggers. This is deliberate: Chinese recognition produces no punctuation, so sentence-level negation would suppress every keyword in the transcript.

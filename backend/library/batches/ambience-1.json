@@ -1,0 +1,52 @@
+[
+  {
+    "id": "rain_light",
+    "kind": "ambience",
+    "name": "rain",
+    "category": "weather",
+    "description": "steady light rain",
+    "prompt": "Steady gentle rain falling on leaves, a roof and the ground, soft continuous patter with occasional drips, calm and cosy, immersive wide stereo, seamless loop. No thunder, no music, no voices.",
+    "variants": 2,
+    "duration": 30
+  },
+  {
+    "id": "wind",
+    "kind": "ambience",
+    "name": "wind",
+    "category": "weather",
+    "description": "wind blowing outdoors",
+    "prompt": "Wind blowing across open countryside, rising and falling gusts with a soft whoosh, airy and natural, immersive wide stereo, seamless loop. No rain, no music, no voices.",
+    "variants": 2,
+    "duration": 30
+  },
+  {
+    "id": "forest_ambience",
+    "kind": "ambience",
+    "name": "forest",
+    "category": "environment",
+    "description": "daytime forest with birds and leaves",
+    "prompt": "Peaceful daytime forest, gentle birdsong from several birds near and far, leaves rustling softly in a light breeze, an occasional twig snap, immersive wide stereo, seamless loop. No music, no voices.",
+    "variants": 2,
+    "duration": 30
+  },
+  {
+    "id": "farm_ambience",
+    "kind": "ambience",
+    "name": "farm",
+    "category": "environment",
+    "description": "farmyard with distant animals",
+    "prompt": "Quiet countryside farmyard in the morning, distant hens clucking, an occasional far-off cow and sheep, birds and a light breeze, relaxed and spacious, immersive wide stereo, seamless loop. No tractors, no music, no voices.",
+    "variants": 2,
+    "duration": 30
+  },
+  {
+    "id": "wind_trees",
+    "kind": "ambience",
+    "name": "wind in the trees",
+    "category": "environment",
+    "description": "wind rustling through tree leaves",
+    "prompt": "Wind moving through tall trees, leaves rustling and branches gently swaying and creaking, soft rising and falling gusts, immersive wide stereo, seamless loop. No birds, no music, no voices.",
+    "variants": 2,
+    "duration": 30
+  }
+]
