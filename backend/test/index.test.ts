@@ -67,13 +67,13 @@ describe("attest → analyze", () => {
     expect(body.expiresIn).toBe(3600);
     expect((env.DEVICE_KEYS as MemoryKeyStore).entries.has(`key:${device.keyId}`)).toBe(true);
 
-    const fetchMock = stubOpenAI({ sounds: [{ id: "wind", trigger: "wind" }], ambience: ["wind"] });
+    const fetchMock = stubOpenAI({ sounds: [{ id: "wind", trigger: "wind" }], ambience: ["wind"], upcoming: ["storm"] });
     const analysis = await call(
       env,
       post("/v1/analyze", { text: "the wind blew", context: "" }, { Authorization: `Bearer ${body.token}` }),
     );
     expect(analysis.status).toBe(200);
-    expect(analysis.body).toEqual({ sounds: [{ id: "wind", trigger: "wind" }], ambience: ["wind"] });
+    expect(analysis.body).toEqual({ sounds: [{ id: "wind", trigger: "wind" }], ambience: ["wind"], upcoming: ["storm"] });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 

@@ -67,6 +67,20 @@ describe("sanitizeResult", () => {
     expect(result.sounds.map((s) => s.id)).toEqual(["dog_bark", "cat_meow", "frog_croak", "cow_moo", "storm"]);
   });
 
+  it("keeps known upcoming ids that aren't already chosen", () => {
+    const result = sanitizeResult(
+      JSON.stringify({
+        sounds: [{ id: "door_knock", trigger: "knock" }],
+        ambience: ["forest_ambience"],
+        upcoming: ["owl_hoot", "door_knock", "forest_ambience", "made_up", 7, "owl_hoot", "storm"],
+      }),
+    );
+    expect(result.upcoming).toEqual(["owl_hoot", "storm"]);
+    expect(sanitizeResult(JSON.stringify({ sounds: [] })).upcoming).toEqual([]);
+    const many = ["dog_bark", "cat_meow", "frog_croak", "cow_moo", "owl_hoot", "storm", "wind", "rain_light"];
+    expect(sanitizeResult(JSON.stringify({ sounds: [], upcoming: many })).upcoming).toHaveLength(6);
+  });
+
   it("throws on invalid JSON", () => {
     expect(() => sanitizeResult("not json")).toThrow(UpstreamError);
   });
@@ -79,7 +93,7 @@ describe("analyzeWithOpenAI", () => {
       { text: "an owl", context: "night" },
       { apiKey: "key", model: "gpt-4o-mini", fetcher },
     );
-    expect(result).toEqual({ sounds: [{ id: "owl_hoot", trigger: "owl" }], ambience: null });
+    expect(result).toEqual({ sounds: [{ id: "owl_hoot", trigger: "owl" }], ambience: null, upcoming: [] });
 
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/chat/completions");

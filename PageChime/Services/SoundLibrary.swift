@@ -51,6 +51,14 @@ protocol CloudSoundSource: AnyObject {
     func hasCloudVariants(_ soundID: String) -> Bool
 }
 
+protocol SoundPrefetching: AnyObject {
+    /// Downloads, in the background, one variant of each cloud sound that has
+    /// none on disk yet, so it can play the moment the story reaches it.
+    /// Returns the IDs newly queued.
+    @discardableResult
+    func prefetch(_ soundIDs: [String]) -> [String]
+}
+
 /// Bundled sounds only (from `TriggerLibrary`).
 final class BundledSoundCatalog: SoundCatalogProviding {
     static let shared = BundledSoundCatalog()
@@ -74,7 +82,7 @@ final class BundledSoundCatalog: SoundCatalogProviding {
 /// The manifest is kept on disk so the library works offline with whatever
 /// was downloaded before. Files are content-addressed and never change, so a
 /// file on disk is always valid.
-final class SoundLibrary: SoundCatalogProviding, CloudSoundSource {
+final class SoundLibrary: SoundCatalogProviding, CloudSoundSource, SoundPrefetching {
     static let shared = SoundLibrary(backend: .shared)
 
     private let backend: Backend?
@@ -90,6 +98,14 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource {
     private var soundsByID: [String: LibrarySound] = [:]
     private var lastFile: [String: String] = [:]
     private var inFlight: [String: Task<URL, Error>] = [:]
+
+    /// Prefetches wait here and run a few at a time, so they don't compete
+    /// with downloads for sounds that are about to play.
+    private var prefetchQueue: [String] = []
+    private var prefetchPending: Set<String> = []
+    private var activePrefetches = 0
+    private let maxConcurrentPrefetches = 2
+    private let maxQueuedPrefetches = 12
 
     private struct Stored: Codable {
         let etag: String?
@@ -202,6 +218,56 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource {
             return localFile(for: soundID)!
         }
         return try await download(variant.file)
+    }
+
+    // MARK: - SoundPrefetching
+
+    @discardableResult
+    func prefetch(_ soundIDs: [String]) -> [String] {
+        var unique: [String] = []
+        for id in soundIDs where !unique.contains(id) && hasCloudVariants(id) && !hasDownloadedVariant(id) {
+            unique.append(id)
+        }
+        let queued = lock.withLock { () -> [String] in
+            let new = unique.filter { !prefetchPending.contains($0) }
+            prefetchQueue += new
+            prefetchPending.formUnion(new)
+            // The story has moved on from the oldest requests; drop them.
+            while prefetchQueue.count > maxQueuedPrefetches {
+                prefetchPending.remove(prefetchQueue.removeFirst())
+            }
+            return new
+        }
+        startPrefetches()
+        return queued
+    }
+
+    private func hasDownloadedVariant(_ soundID: String) -> Bool {
+        sound(soundID)?.variants.contains { fileManager.fileExists(atPath: fileURL($0.file).path) } ?? false
+    }
+
+    private func startPrefetches() {
+        let next = lock.withLock { () -> [String] in
+            var started: [String] = []
+            while activePrefetches < maxConcurrentPrefetches, !prefetchQueue.isEmpty {
+                started.append(prefetchQueue.removeFirst())
+                activePrefetches += 1
+            }
+            return started
+        }
+        for soundID in next {
+            Task { [weak self] in
+                guard let self else { return }
+                if !self.hasDownloadedVariant(soundID) {
+                    _ = try? await self.fetchFile(for: soundID)
+                }
+                self.lock.withLock {
+                    self.activePrefetches -= 1
+                    self.prefetchPending.remove(soundID)
+                }
+                self.startPrefetches()
+            }
+        }
     }
 
     // MARK: - Downloads

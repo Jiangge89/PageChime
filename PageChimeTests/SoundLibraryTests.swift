@@ -132,6 +132,26 @@ final class SoundLibraryTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: wolf.path))
     }
 
+    func testPrefetchDownloadsOneVariantOfEachMissingCloudSound() async throws {
+        let library = makeLibrary()
+        await library.refresh()
+
+        let queued = library.prefetch(["wolf_howl", "cave_drips", "wolf_howl", "dog_bark", "nope"])
+        XCTAssertEqual(queued, ["wolf_howl", "cave_drips"], "Bundled-only and unknown sounds are skipped")
+        XCTAssertEqual(library.prefetch(["wolf_howl"]), [], "Already queued")
+
+        let wolfRequests = { self.requests("/v1/sounds/wolf_howl.aaaa.m4a") + self.requests("/v1/sounds/wolf_howl.bbbb.m4a") }
+        let deadline = Date().addingTimeInterval(3)
+        while (requests("/v1/sounds/cave_drips.cccc.m4a") == 0 || wolfRequests() == 0), Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        try await Task.sleep(nanoseconds: 100_000_000) // let the downloads land on disk
+        XCTAssertEqual(requests("/v1/sounds/cave_drips.cccc.m4a"), 1)
+        XCTAssertEqual(wolfRequests(), 1,
+                       "Prefetch takes one variant; more come as the sound is used")
+        XCTAssertEqual(library.prefetch(["wolf_howl", "cave_drips"]), [], "Already on disk")
+    }
+
     func testUnknownSoundCannotBeFetched() async {
         let library = makeLibrary()
         await library.refresh()

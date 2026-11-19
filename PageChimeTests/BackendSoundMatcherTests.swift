@@ -47,7 +47,11 @@ final class BackendSoundMatcherTests: XCTestCase {
     func testAnalyzeSendsTextWithTokenAndParsesResult() async throws {
         StubServer.routes["/v1/dev-session"] = { _ in (200, ["token": "T1", "expiresIn": 3600]) }
         StubServer.routes["/v1/analyze"] = { _ in
-            (200, ["sounds": [["id": "owl_hoot", "trigger": "an owl"]], "ambience": ["night_ambience", "not_in_app"]])
+            (200, [
+                "sounds": [["id": "owl_hoot", "trigger": "an owl"]],
+                "ambience": ["night_ambience", "not_in_app"],
+                "upcoming": ["wolf_howl"],
+            ])
         }
 
         let result = try await matcher().analyze(text: "an owl hooted", context: "it was night")
@@ -56,6 +60,7 @@ final class BackendSoundMatcherTests: XCTestCase {
         XCTAssertEqual(result.sounds.first?.trigger, "an owl")
         // Unknown ids pass through; the view model filters what it can't play.
         XCTAssertEqual(result.ambience, ["night_ambience", "not_in_app"])
+        XCTAssertEqual(result.upcoming, ["wolf_howl"])
 
         let request = try XCTUnwrap(StubServer.requests.last { $0.path == "/v1/analyze" })
         XCTAssertEqual(request.authorization, "Bearer T1")
@@ -69,6 +74,7 @@ final class BackendSoundMatcherTests: XCTestCase {
 
         let result = try await matcher().analyze(text: "hello", context: "")
         XCTAssertNil(result.ambience)
+        XCTAssertEqual(result.upcoming, [], "Older servers send no upcoming list")
     }
 
     func testExpiredTokenIsRefreshedOnce() async throws {

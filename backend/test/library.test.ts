@@ -131,7 +131,11 @@ describe("library routes", () => {
             choices: [
               {
                 message: {
-                  content: JSON.stringify({ sounds: [{ id: "wolf_howl", trigger: "a wolf howled" }], ambience: ["cave_drips"] }),
+                  content: JSON.stringify({
+                    sounds: [{ id: "wolf_howl", trigger: "a wolf howled" }],
+                    ambience: ["cave_drips"],
+                    upcoming: ["owl_hoot", "cave_drips"],
+                  }),
                 },
               },
             ],
@@ -151,6 +155,7 @@ describe("library routes", () => {
     expect(await response.json()).toEqual({
       sounds: [{ id: "wolf_howl", trigger: "a wolf howled" }],
       ambience: ["cave_drips"],
+      upcoming: ["owl_hoot"],
     });
     const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
     expect(body.messages[0].content).toContain("- wolf_howl: a lone wolf howling at night");

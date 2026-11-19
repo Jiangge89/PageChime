@@ -10,6 +10,8 @@ struct SoundAnalysis {
     let sounds: [LLMSoundMatch]
     /// Ambience beds for the current scene, or nil if the scene is unchanged.
     let ambience: [String]?
+    /// Sounds the story makes likely soon, to download ahead of time.
+    var upcoming: [String] = []
 }
 
 protocol SoundMatching: AnyObject {

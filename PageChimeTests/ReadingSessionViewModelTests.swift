@@ -9,6 +9,7 @@ final class ReadingSessionViewModelTests: XCTestCase {
     private var cacheURL: URL!
     private var viewModel: ReadingSessionViewModel!
     private var catalog: FakeCatalog!
+    private var prefetcher: FakePrefetcher!
     private var now = Date()
 
     override func setUp() async throws {
@@ -16,6 +17,7 @@ final class ReadingSessionViewModelTests: XCTestCase {
         player = FakePlayer()
         llm = FakeLLM()
         catalog = FakeCatalog()
+        prefetcher = FakePrefetcher()
         cacheURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sound_cache_\(UUID().uuidString).json")
         viewModel = ReadingSessionViewModel(
@@ -23,7 +25,8 @@ final class ReadingSessionViewModelTests: XCTestCase {
             soundPlayer: player,
             llmService: llm,
             soundCache: SoundCache(fileURL: cacheURL),
-            catalog: catalog
+            catalog: catalog,
+            prefetcher: prefetcher
         )
         viewModel.currentTime = { [unowned self] in self.now }
 
@@ -180,6 +183,20 @@ final class ReadingSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentEffects.first { $0.soundID == "wolf_howl" }?.entity, "wolf")
     }
 
+    func testUpcomingSoundsArePrefetched() async throws {
+        catalog.cloud["wolf_growl"] = SoundInfo(isAmbience: false, type: .animal, entity: "wolf", intensity: .normal)
+        llm.responder = { _ in
+            SoundAnalysis(sounds: [], ambience: nil, upcoming: ["wolf_growl", "door_knock", "not_a_sound"])
+        }
+
+        speech.send("Something made a strange noise up in the attic")
+        try await waitUntil { !self.prefetcher.requested.isEmpty }
+
+        XCTAssertEqual(prefetcher.requested, [["wolf_growl", "door_knock"]], "Unknown ids are not prefetched")
+        XCTAssertTrue(player.playedIDs.isEmpty, "Upcoming sounds are not played")
+        try await waitUntil { self.viewModel.analysisLogs.first?.note?.contains("prefetch: wolf_growl") == true }
+    }
+
     func testSpeechActivityIsReportedForDucking() async throws {
         speech.send("Once upon a time")
         try await waitUntil { self.player.speechActivityCount > 0 }
@@ -234,6 +251,14 @@ private final class FakeCatalog: SoundCatalogProviding {
     var cloud: [String: SoundInfo] = [:]
     func info(for soundID: String) -> SoundInfo? {
         BundledSoundCatalog.shared.info(for: soundID) ?? cloud[soundID]
+    }
+}
+
+private final class FakePrefetcher: SoundPrefetching {
+    private(set) var requested: [[String]] = []
+    func prefetch(_ soundIDs: [String]) -> [String] {
+        if !soundIDs.isEmpty { requested.append(soundIDs) }
+        return soundIDs
     }
 }
 

@@ -72,6 +72,7 @@ Speech, playback and analysis are injected via protocols (`SpeechRecognizing`, `
 3. **Cache** (`SoundCache`): each segment is normalized and checked against trigger phrases learned from earlier LLM results; hits play instantly.
 4. **Scene LLM** (`BackendSoundMatcher` → PageChime API): every segment is also sent, via the backend, to `gpt-4o-mini` with the previous ~300 characters as context. It returns one-shot sounds for the new text and the ambience beds for the current scene (or `null` to keep the scene). Requests run concurrently and are never cancelled by newer speech.
 5. **Merging**: LLM one-shots already played by the keyword path for that text are skipped; one-shots arriving more than 4s late are dropped; ambience is always applied, since it follows the scene rather than a single word.
+6. **Prefetch**: the LLM also lists up to 6 `upcoming` sounds the story makes likely soon (the wolf once Red Riding Hood enters the forest, the giant once Jack climbs the beanstalk). `SoundLibrary` downloads one variant of each that isn't on disk yet, two at a time in the background, so cloud sounds are usually ready before the text reaches them. The debug panel shows what was prefetched.
 
 ## Privacy Design
 
@@ -233,7 +234,7 @@ Add a case to `ReadingLanguage`, keyword arrays for it in each trigger entry's `
 - **Keyword matching is prefix-based.** English keywords must start a word, but "frogman" still matches "frog". Exclude patterns cover some Chinese cases (e.g. 牛奶 is not a cow).
 - **Bundled sounds are short and single-variant.** The 58 bundled files are mono 22 kHz with ~6s ambience loops, and their source and licence are unverified, so they stay bundled and are not uploaded to the cloud library. Cloud sounds fix this, but the library is empty until sounds are added.
 - **The LLM prompt lists every sound.** Fine for hundreds of sounds; a much larger library needs description-based retrieval.
-- **First use of a cloud sound waits for a download.** One-shots that take more than 1.5s to download are skipped (they're cached for next time).
+- **First use of a cloud sound may wait for a download.** Prefetch usually gets there first, but a sound the LLM didn't foresee is downloaded when first needed; one-shots that take more than 1.5s are skipped (and cached for next time).
 - **Keyword negation only looks before the keyword.** The keyword engine checks ~15 characters (English) or 5 characters (Chinese) before a keyword. "There was no frog" is suppressed, but "The frog did not croak" still triggers. This is deliberate: Chinese recognition produces no punctuation, so sentence-level negation would suppress every keyword in the transcript.
 - **No question handling.** Questions like "What sound does a frog make?" trigger immediately, without delay.
 - **No background listening.** The app works in the foreground only. Screen sleep is disabled during active sessions.

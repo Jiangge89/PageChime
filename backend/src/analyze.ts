@@ -4,6 +4,7 @@ export const MAX_TEXT_LENGTH = 1000;
 export const MAX_CONTEXT_LENGTH = 1000;
 const MAX_SOUNDS = 4;
 const MAX_AMBIENCE = 3;
+const MAX_UPCOMING = 6;
 
 export interface AnalyzeRequest {
   text: string;
@@ -19,6 +20,8 @@ export interface AnalyzeResult {
   sounds: SoundMatch[];
   /** Ambience for the current scene, or null to keep the current scene. */
   ambience: string[] | null;
+  /** Sounds likely to be needed soon, so the app can download them early. */
+  upcoming: string[];
 }
 
 export class UpstreamError extends Error {
@@ -35,6 +38,10 @@ export class SoundCatalog {
   readonly oneShotIds: Set<string>;
   readonly ambienceIds: Set<string>;
   readonly systemPrompt: string;
+
+  has(id: string): boolean {
+    return this.oneShotIds.has(id) || this.ambienceIds.has(id);
+  }
 
   constructor(readonly sounds: CatalogSound[]) {
     this.oneShotIds = new Set(sounds.filter((s) => !s.ambience).map((s) => s.id));
@@ -59,12 +66,13 @@ ${catalogSection(sounds, false)}
 Ambience beds (looping background for the current setting):
 ${catalogSection(sounds, true)}
 
-Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null}
+Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null, "upcoming": ["sound_id"]}
 
 Rules:
 - "sounds": one-shots for things happening in the NEW text only, never for things only in the context. Skip negated events (e.g. "not a dog", "没有狗"). At most ${MAX_SOUNDS}.
 - "trigger": the shortest phrase copied verbatim from the new text that identifies the sound.
 - "ambience": 0-${MAX_AMBIENCE} ambience ids for where the story is at the end of the new text. Use the context to understand the setting, and keep the same set while the setting doesn't change. Return null if the new text says nothing about the setting. Return [] only if the story clearly moves somewhere quiet.
+- "upcoming": 0-${MAX_UPCOMING} ids (one-shots or ambience) the new text doesn't trigger but the next pages probably will: sounds of characters and places already in the story and, if you recognise a well-known tale, of its later scenes (e.g. the giant in Jack and the Beanstalk). They are downloaded in advance, so prefer sounds specific to this story over generic ones like footsteps. [] if nothing stands out.
 - Only use ids from the lists above.`;
 }
 
@@ -125,7 +133,13 @@ export function sanitizeResult(content: string, catalog: SoundCatalog = BUNDLED_
     ambience = ambience.slice(0, MAX_AMBIENCE);
   }
 
-  return { sounds: [...oneShots, ...inlineAmbience], ambience };
+  const chosen = new Set([...seen, ...(ambience ?? [])]);
+  const upcoming = Array.isArray(object.upcoming)
+    ? [...new Set(object.upcoming.filter((id): id is string => typeof id === "string" && catalog.has(id) && !chosen.has(id)))]
+        .slice(0, MAX_UPCOMING)
+    : [];
+
+  return { sounds: [...oneShots, ...inlineAmbience], ambience, upcoming };
 }
 
 export async function analyzeWithOpenAI(
@@ -149,7 +163,7 @@ export async function analyzeWithOpenAI(
           { role: "user", content: buildUserMessage(request) },
         ],
         temperature: 0,
-        max_tokens: 150,
+        max_tokens: 220,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(options.timeoutMs ?? 5000),

@@ -29,6 +29,10 @@ final class BackendSoundMatcher: SoundMatching {
             guard let id = item["id"] as? String, let trigger = item["trigger"] as? String else { return nil }
             return LLMSoundMatch(id: id, trigger: trigger)
         }
-        return SoundAnalysis(sounds: matches, ambience: json["ambience"] as? [String])
+        return SoundAnalysis(
+            sounds: matches,
+            ambience: json["ambience"] as? [String],
+            upcoming: json["upcoming"] as? [String] ?? []
+        )
     }
 }

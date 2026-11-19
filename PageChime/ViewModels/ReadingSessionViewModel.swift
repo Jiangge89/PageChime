@@ -19,6 +19,7 @@ final class ReadingSessionViewModel: ObservableObject {
     private let llmService: SoundMatching
     private let soundCache: SoundCache
     private let catalog: SoundCatalogProviding
+    private let prefetcher: SoundPrefetching?
     private var sessionID: UInt = 0
 
     /// Transcript length already scanned by the instant keyword path.
@@ -52,7 +53,8 @@ final class ReadingSessionViewModel: ObservableObject {
         soundPlayer: SoundEffectPlaying = SoundEffectPlayer(),
         llmService: SoundMatching = BackendSoundMatcher(),
         soundCache: SoundCache = SoundCache(),
-        catalog: SoundCatalogProviding = SoundLibrary.shared
+        catalog: SoundCatalogProviding = SoundLibrary.shared,
+        prefetcher: SoundPrefetching? = SoundLibrary.shared
     ) {
         self.speechService = speechService
         self.eventEngine = eventEngine
@@ -60,6 +62,7 @@ final class ReadingSessionViewModel: ObservableObject {
         self.llmService = llmService
         self.soundCache = soundCache
         self.catalog = catalog
+        self.prefetcher = prefetcher
         setupCallbacks()
     }
 
@@ -316,6 +319,12 @@ final class ReadingSessionViewModel: ObservableObject {
         }
         if !dropped.isEmpty {
             notes.append("late, skipped: " + dropped.joined(separator: ", "))
+        }
+
+        // Download what the story is heading towards, so it plays instantly.
+        let queued = prefetcher?.prefetch(analysis.upcoming.filter { catalog.info(for: $0) != nil }) ?? []
+        if !queued.isEmpty {
+            notes.append("prefetch: " + queued.joined(separator: ", "))
         }
 
         let foundAnything = !analysis.sounds.isEmpty || analysis.ambience != nil
