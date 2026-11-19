@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>PageChime can scan the page you're about to read so its sounds play the moment you reach them. The text is read on your device; the photo is never uploaded or saved.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>PageChime listens to your storytelling to play matching sound effects. Your voice is processed during the reading session and is never saved.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

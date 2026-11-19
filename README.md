@@ -74,6 +74,15 @@ Speech, playback and analysis are injected via protocols (`SpeechRecognizing`, `
 5. **Merging**: LLM one-shots already played by the keyword path for that text are skipped; one-shots arriving more than 4s late are dropped; ambience is always applied, since it follows the scene rather than a single word.
 6. **Prefetch**: the LLM also lists up to 6 `upcoming` sounds the story makes likely soon (the wolf once Red Riding Hood enters the forest, the giant once Jack climbs the beanstalk). `SoundLibrary` downloads one variant of each that isn't on disk yet, two at a time in the background, so cloud sounds are usually ready before the text reaches them. The debug panel shows what was prefetched.
 
+### Scanning the Page First
+
+Optionally, the parent scans the page before reading it (**Scan Page**: the document camera on a device, a photo picker in the simulator):
+
+1. **Text recognition on device** (`VisionTextRecognizer`): Apple Vision reads the page (English, or Simplified Chinese plus English) in reading order. The photo never leaves the phone.
+2. **Page analysis** (`POST /v1/analyze-page`): the page text goes to the LLM once. It returns every sound cue in reading order with a 2-5 word trigger phrase copied from the page (the server drops any phrase that isn't really on the page), the opening ambience, and sounds for the following pages. About 2s and $0.0002 per page.
+3. **Before reading**: the page's sounds are prefetched, its ambience starts, and its trigger phrases are given to speech recognition as hints.
+4. **While reading**: each partial transcript is checked against the cues, and a cue plays the moment its phrase is heard, with no network wait. Long phrases also match on their last three words (Chinese: last four characters) in case the start is misheard. Each cue plays once per reading; ambience cues change the scene. The live analysis keeps running alongside, for anything said off the page.
+
 ### Analysis Cost
 
 Measured on a 1,400-character story read through the local API with `gpt-4o-mini` (about 14 characters per second of reading):
@@ -91,6 +100,7 @@ The catalog part of the prompt is identical on every call, so OpenAI serves it f
 - **Transcript text goes through the PageChime API to OpenAI.** Newly recognized text snippets (plus ~300 characters of preceding story) are sent to the PageChime API on Cloudflare, which forwards them to OpenAI for sound matching and returns the result. The API does not store or log the text. Audio is never sent. Without a configured backend URL, the app uses fully local keyword matching.
 - **The API stores App Attest keys and sound gaps.** Each device's attested public key and signature counter go in Cloudflare KV. When a story calls for a sound the library lacks, the model's short description of it (e.g. "a witch cackling") is counted in Cloudflare D1, with a hashed device ID so one reader counts once. The reader's text itself is never stored.
 - **Cloud sounds are cached on device** in `Library/Caches/SoundLibrary` (up to 200 MB; iOS may purge it), with the library manifest in `Application Support/SoundLibrary`.
+- **Scanned pages:** the photo is read on device and discarded; only the recognized text goes through the PageChime API to OpenAI, like live transcript text, and isn't stored.
 - **Learned phrases are stored on device.** `SoundCache` persists short trigger phrases (e.g. "the dog barked") and their sound IDs to `Documents/sound_cache.json`. Full transcripts are not saved.
 - **Live transcript and debug logs are in memory only** and are cleared when the session stops or the app terminates.
 - **No analytics, advertising, or tracking SDKs.**
@@ -160,6 +170,7 @@ Create the sound bucket once with `npx wrangler r2 bucket create pagechime-sound
 |-----------|-----|---------|
 | Microphone | `NSMicrophoneUsageDescription` | Capture the parent's narration |
 | Speech Recognition | `NSSpeechRecognitionUsageDescription` | Convert speech to text for event detection |
+| Camera | `NSCameraUsageDescription` | Optional: scan the page about to be read |
 
 ## Cloud Sound Library
 

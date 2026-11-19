@@ -27,6 +27,24 @@ struct SegmentPolicy {
     }
 }
 
+/// A scanned book page and how far its analysis has got.
+enum PageStatus: Equatable {
+    case none
+    case reading
+    case analyzing
+    case ready(cues: Int)
+    case failed(String)
+}
+
+/// A sound on the scanned page, set off when the reader says its phrase.
+private struct PageCue {
+    let soundID: String
+    /// Normalized phrases, any of which fires the cue: the whole trigger and,
+    /// for long ones, its end, in case recognition garbles the start.
+    let patterns: [String]
+    var fired = false
+}
+
 @MainActor
 final class ReadingSessionViewModel: ObservableObject {
     @Published var language: ReadingLanguage = .english
@@ -35,6 +53,7 @@ final class ReadingSessionViewModel: ObservableObject {
     @Published var recentEffects: [StoryEvent] = []
     @Published var volume: Float = 0.4
     @Published var analysisLogs: [AnalysisLog] = []
+    @Published private(set) var pageStatus: PageStatus = .none
 
     var currentTime: () -> Date = { Date() }
     var segmentPolicy: (ReadingLanguage) -> SegmentPolicy = SegmentPolicy.standard
@@ -46,6 +65,8 @@ final class ReadingSessionViewModel: ObservableObject {
     private let soundCache: SoundCache
     private let catalog: SoundCatalogProviding
     private let prefetcher: SoundPrefetching?
+    private let pageAnalyzer: PageAnalyzing?
+    private let textRecognizer: PageTextRecognizing
     private var sessionID: UInt = 0
 
     /// Transcript length already scanned by the instant keyword path.
@@ -61,6 +82,11 @@ final class ReadingSessionViewModel: ObservableObject {
     private var lastPlayedPosition: [String: Int] = [:]
     /// Ambience beds the LLM last chose for the scene.
     private var currentScene: Set<String> = []
+
+    private var pageCues: [PageCue] = []
+    private var pageAmbience: [String]?
+    /// Bumped per scan, so a slow analysis can't overwrite a newer page.
+    private var pageGeneration = 0
 
     private let cooldownInterval: TimeInterval = 3
     /// One-shot sounds from an LLM result older than this are dropped:
@@ -79,7 +105,9 @@ final class ReadingSessionViewModel: ObservableObject {
         llmService: SoundMatching = BackendSoundMatcher(),
         soundCache: SoundCache = SoundCache(),
         catalog: SoundCatalogProviding = SoundLibrary.shared,
-        prefetcher: SoundPrefetching? = SoundLibrary.shared
+        prefetcher: SoundPrefetching? = SoundLibrary.shared,
+        pageAnalyzer: PageAnalyzing? = Backend.shared == nil ? nil : BackendSoundMatcher(),
+        textRecognizer: PageTextRecognizing = VisionTextRecognizer()
     ) {
         self.speechService = speechService
         self.eventEngine = eventEngine
@@ -88,6 +116,8 @@ final class ReadingSessionViewModel: ObservableObject {
         self.soundCache = soundCache
         self.catalog = catalog
         self.prefetcher = prefetcher
+        self.pageAnalyzer = pageAnalyzer
+        self.textRecognizer = textRecognizer
         setupCallbacks()
     }
 
@@ -104,6 +134,8 @@ final class ReadingSessionViewModel: ObservableObject {
     func changeLanguage(_ newLanguage: ReadingLanguage) {
         let wasListening = isStartingOrListening
         if wasListening { stopSession() }
+        // Cue phrases are normalized per language.
+        if pageStatus != .none { clearPage() }
         language = newLanguage
         if wasListening {
             Task { await startSession() }
@@ -119,6 +151,123 @@ final class ReadingSessionViewModel: ObservableObject {
         analysisLogs.removeAll()
     }
 
+    // MARK: - Scanned Page
+
+    var canScanPages: Bool { pageAnalyzer != nil }
+
+    /// Reads the text on photographed pages, then finds their sound cues.
+    func scanPage(_ images: [UIImage]) async {
+        pageGeneration += 1
+        let generation = pageGeneration
+        pageStatus = .reading
+        do {
+            let text = try await textRecognizer.recognizeText(in: images, language: language)
+            guard generation == pageGeneration else { return }
+            guard text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 else {
+                pageStatus = .failed(language == .chinese ? "没有在照片里找到文字" : "No text found in the photo")
+                return
+            }
+            await loadPage(text: text, generation: generation)
+        } catch {
+            guard generation == pageGeneration else { return }
+            pageStatus = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Sends a page's text for analysis and arms its cues.
+    func loadPage(text: String) async {
+        pageGeneration += 1
+        await loadPage(text: text, generation: pageGeneration)
+    }
+
+    private func loadPage(text: String, generation: Int) async {
+        guard let pageAnalyzer else {
+            pageStatus = .failed("Page scanning needs the PageChime server")
+            return
+        }
+        pageStatus = .analyzing
+        let pageLanguage = language
+        let started = currentTime()
+        let analysis: PageAnalysis
+        do {
+            analysis = try await pageAnalyzer.analyzePage(text: text, context: String(transcript.suffix(contextLength)))
+        } catch {
+            guard generation == pageGeneration else { return }
+            pageStatus = .failed(language == .chinese ? "这一页没能分析成功" : "Couldn't analyze the page")
+            appendLog(text: text, method: .error, waitMs: 0, analysisMs: 0, soundIDs: [], note: "page: \(error)")
+            return
+        }
+        guard generation == pageGeneration else { return }
+
+        let cues = analysis.cues.filter { catalog.info(for: $0.id) != nil }
+        pageCues = cues.compactMap { Self.makeCue($0, language: pageLanguage) }
+        let isAmbience = { (id: String) in self.catalog.info(for: id)?.isAmbience == true }
+        pageAmbience = analysis.ambience?.filter(isAmbience)
+
+        // Everything this page and the next ones need, downloaded before it's read.
+        let upcoming = analysis.upcoming.filter { catalog.info(for: $0) != nil }
+        prefetcher?.prefetch(cues.map(\.id) + (pageAmbience ?? []) + upcoming)
+        // Help recognition with the page's own phrases (used from the next restart).
+        speechService.contextualStrings = Array(
+            (cues.map(\.trigger) + TriggerLibrary.contextualStrings(for: pageLanguage)).prefix(100)
+        )
+        if isListening, let ambience = pageAmbience {
+            applyScene(Set(ambience), sourceText: text)
+        }
+
+        pageStatus = .ready(cues: pageCues.count)
+        let analysisMs = Int(currentTime().timeIntervalSince(started) * 1000)
+        appendLog(
+            text: text, method: .page, waitMs: 0, analysisMs: analysisMs, soundIDs: cues.map(\.id),
+            note: "page: \(pageCues.count) cues" + (pageAmbience.map { $0.isEmpty ? "" : ", scene: " + $0.joined(separator: ", ") } ?? "")
+        )
+    }
+
+    func clearPage() {
+        pageGeneration += 1
+        pageCues = []
+        pageAmbience = nil
+        pageStatus = .none
+        speechService.contextualStrings = TriggerLibrary.contextualStrings(for: language)
+    }
+
+    private static func makeCue(_ match: LLMSoundMatch, language: ReadingLanguage) -> PageCue? {
+        let whole = SoundCache.normalize(match.trigger, language: language)
+        guard whole.count >= 2 else { return nil }
+        var patterns = [whole]
+        if language == .chinese {
+            if whole.count >= 6 { patterns.append(String(whole.suffix(4))) }
+        } else {
+            let words = match.trigger.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            if words.count >= 4 {
+                patterns.append(SoundCache.normalize(words.suffix(3).joined(separator: " "), language: language))
+            }
+        }
+        return PageCue(soundID: match.id, patterns: patterns)
+    }
+
+    /// Plays page cues whose phrase was just read. Each fires once per reading.
+    private func runPageCues(_ text: String) {
+        guard pageCues.contains(where: { !$0.fired }) else { return }
+        // The longest trigger is 80 characters; look a little further back.
+        let tail = SoundCache.normalize(String(text.suffix(120)), language: language)
+        var played: [String] = []
+        for index in pageCues.indices where !pageCues[index].fired {
+            guard pageCues[index].patterns.contains(where: { tail.contains($0) }) else { continue }
+            pageCues[index].fired = true
+            let soundID = pageCues[index].soundID
+            if catalog.info(for: soundID)?.isAmbience == true {
+                applyScene([soundID], sourceText: text)
+                played.append(soundID)
+            } else if playSound(soundID, sourceText: text, position: text.count) {
+                played.append(soundID)
+            }
+        }
+        if !played.isEmpty {
+            appendLog(text: String(text.suffix(60)), method: .page, waitMs: 0, analysisMs: 0, soundIDs: played)
+        }
+    }
+
     // MARK: - Session Lifecycle
 
     private func startSession() async {
@@ -132,9 +281,17 @@ final class ReadingSessionViewModel: ObservableObject {
             return
         }
 
+        // Reading the page again plays its cues again.
+        for index in pageCues.indices { pageCues[index].fired = false }
+
         do {
-            speechService.contextualStrings = TriggerLibrary.contextualStrings(for: language)
+            if pageCues.isEmpty {
+                speechService.contextualStrings = TriggerLibrary.contextualStrings(for: language)
+            }
             try await speechService.start(language: language)
+            if let ambience = pageAmbience, !ambience.isEmpty {
+                applyScene(Set(ambience), sourceText: "")
+            }
             UIApplication.shared.isIdleTimerDisabled = true
         } catch {
             state = .error(error.localizedDescription)
@@ -191,6 +348,7 @@ final class ReadingSessionViewModel: ObservableObject {
         keywordScannedLength = min(keywordScannedLength, newTranscript.count)
         dispatchedLength = min(dispatchedLength, newTranscript.count)
 
+        runPageCues(newTranscript)
         runKeywordPath(newTranscript)
         scheduleSegmentAnalysis(newTranscript)
     }

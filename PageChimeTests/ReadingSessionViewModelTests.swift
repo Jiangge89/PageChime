@@ -10,6 +10,8 @@ final class ReadingSessionViewModelTests: XCTestCase {
     private var viewModel: ReadingSessionViewModel!
     private var catalog: FakeCatalog!
     private var prefetcher: FakePrefetcher!
+    private var pages: FakePageAnalyzer!
+    private var recognizer: FakeTextRecognizer!
     private var now = Date()
 
     override func setUp() async throws {
@@ -18,6 +20,8 @@ final class ReadingSessionViewModelTests: XCTestCase {
         llm = FakeLLM()
         catalog = FakeCatalog()
         prefetcher = FakePrefetcher()
+        pages = FakePageAnalyzer()
+        recognizer = FakeTextRecognizer()
         cacheURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sound_cache_\(UUID().uuidString).json")
         viewModel = ReadingSessionViewModel(
@@ -26,7 +30,9 @@ final class ReadingSessionViewModelTests: XCTestCase {
             llmService: llm,
             soundCache: SoundCache(fileURL: cacheURL),
             catalog: catalog,
-            prefetcher: prefetcher
+            prefetcher: prefetcher,
+            pageAnalyzer: pages,
+            textRecognizer: recognizer
         )
         viewModel.currentTime = { [unowned self] in self.now }
 
@@ -230,6 +236,70 @@ final class ReadingSessionViewModelTests: XCTestCase {
         try await waitUntil(timeout: 2) { self.llm.calls.count == 2 }
     }
 
+    // MARK: - Scanned Page
+
+    private func addCloudWolfAndCave() {
+        catalog.cloud["wolf_howl"] = SoundInfo(isAmbience: false, type: .animal, entity: "wolf", intensity: .normal)
+        catalog.cloud["cave_drips"] = SoundInfo(isAmbience: true, type: .environment, entity: "cave", intensity: .normal)
+    }
+
+    func testScannedPagePlaysCueTheMomentItsPhraseIsRead() async throws {
+        addCloudWolfAndCave()
+        pages.result = PageAnalysis(
+            cues: [LLMSoundMatch(id: "wolf_howl", trigger: "the wolf howled at the moon"),
+                   LLMSoundMatch(id: "cave_drips", trigger: "into the dark cave"),
+                   LLMSoundMatch(id: "not_a_sound", trigger: "something")],
+            ambience: ["forest_ambience"],
+            upcoming: ["owl_hoot"]
+        )
+        await viewModel.loadPage(text: "page text")
+
+        XCTAssertEqual(viewModel.pageStatus, .ready(cues: 2))
+        XCTAssertEqual(prefetcher.requested.last, ["wolf_howl", "cave_drips", "forest_ambience", "owl_hoot"])
+        XCTAssertEqual(player.sceneCalls.last, ["forest_ambience"], "The page's opening scene starts at once")
+        XCTAssertTrue(speech.contextualStrings.contains("the wolf howled at the moon"))
+
+        llm.close() // cues must not wait for the LLM
+        speech.send("Far away the wolf howled at the moon")
+        try await waitUntil(timeout: 0.5) { self.player.playedIDs.contains("wolf_howl") }
+        XCTAssertTrue(viewModel.analysisLogs.contains { $0.method == .page && $0.soundIDs == ["wolf_howl"] })
+
+        speech.send("Far away the wolf howled at the moon and ran into the dark cave")
+        try await waitUntil(timeout: 0.5) { self.player.sceneCalls.last == ["cave_drips"] }
+
+        now = now.addingTimeInterval(10)
+        speech.send("Far away the wolf howled at the moon and ran into the dark cave. Again the wolf howled at the moon")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(player.playedIDs.filter { $0 == "wolf_howl" }.count, 1, "Each cue plays once per reading")
+    }
+
+    func testLongCueStillFiresWhenItsFirstWordIsMisheard() async throws {
+        addCloudWolfAndCave()
+        pages.result = PageAnalysis(
+            cues: [LLMSoundMatch(id: "wolf_howl", trigger: "the grey wolf howled loudly")], ambience: nil, upcoming: []
+        )
+        await viewModel.loadPage(text: "page text")
+        llm.close()
+
+        speech.send("then the gray wolf howled loudly")
+        try await waitUntil(timeout: 0.5) { self.player.playedIDs.contains("wolf_howl") }
+    }
+
+    func testPageFailuresAreReported() async throws {
+        recognizer.text = "  "
+        await viewModel.scanPage([UIImage()])
+        guard case .failed = viewModel.pageStatus else { return XCTFail("Expected failure, got \(viewModel.pageStatus)") }
+
+        recognizer.text = "The wolf howled"
+        pages.error = URLError(.timedOut)
+        await viewModel.scanPage([UIImage()])
+        guard case .failed = viewModel.pageStatus else { return XCTFail("Expected failure, got \(viewModel.pageStatus)") }
+        XCTAssertEqual(pages.texts, ["The wolf howled"])
+
+        viewModel.clearPage()
+        XCTAssertEqual(viewModel.pageStatus, .none)
+    }
+
     func testSpeechActivityIsReportedForDucking() async throws {
         speech.send("Once upon a time")
         try await waitUntil { self.player.speechActivityCount > 0 }
@@ -287,6 +357,22 @@ private final class FakeCatalog: SoundCatalogProviding {
     func info(for soundID: String) -> SoundInfo? {
         BundledSoundCatalog.shared.info(for: soundID) ?? cloud[soundID]
     }
+}
+
+private final class FakePageAnalyzer: PageAnalyzing {
+    var result = PageAnalysis(cues: [], ambience: nil, upcoming: [])
+    var error: Error?
+    private(set) var texts: [String] = []
+    func analyzePage(text: String, context _: String) async throws -> PageAnalysis {
+        texts.append(text)
+        if let error { throw error }
+        return result
+    }
+}
+
+private final class FakeTextRecognizer: PageTextRecognizing {
+    var text = ""
+    func recognizeText(in _: [UIImage], language _: ReadingLanguage) async throws -> String { text }
 }
 
 private final class FakePrefetcher: SoundPrefetching {

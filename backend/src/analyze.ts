@@ -58,7 +58,7 @@ export class SoundCatalog {
   }
 }
 
-function catalogSection(sounds: CatalogSound[], ambience: boolean): string {
+export function catalogSection(sounds: CatalogSound[], ambience: boolean): string {
   return sounds
     .filter((s) => Boolean(s.ambience) === ambience)
     .map((s) => `- ${s.id}: ${s.description}`)
@@ -152,7 +152,7 @@ export function sanitizeResult(content: string, catalog: SoundCatalog = BUNDLED_
   return { sounds: [...oneShots, ...inlineAmbience], ambience, upcoming, missing: parseMissing(object.missing, catalog) };
 }
 
-function parseMissing(value: unknown, catalog: SoundCatalog): SoundGap[] {
+export function parseMissing(value: unknown, catalog: SoundCatalog): SoundGap[] {
   const gaps: SoundGap[] = [];
   for (const item of Array.isArray(value) ? value : []) {
     if (typeof item !== "object" || item === null) continue;
@@ -167,12 +167,21 @@ function parseMissing(value: unknown, catalog: SoundCatalog): SoundGap[] {
   return gaps;
 }
 
-export async function analyzeWithOpenAI(
-  request: AnalyzeRequest,
-  options: { apiKey: string; model: string; catalog?: SoundCatalog; fetcher?: typeof fetch; timeoutMs?: number },
-): Promise<Analysis> {
+export interface OpenAIOptions {
+  apiKey: string;
+  model: string;
+  catalog?: SoundCatalog;
+  fetcher?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/** One JSON-mode chat completion; returns the message content. */
+export async function completeJSON(
+  system: string,
+  user: string,
+  options: OpenAIOptions & { maxTokens: number; label: string },
+): Promise<string> {
   const fetcher = options.fetcher ?? fetch;
-  const catalog = options.catalog ?? BUNDLED_CATALOG;
   let response: Response;
   try {
     response = await fetcher("https://api.openai.com/v1/chat/completions", {
@@ -184,11 +193,11 @@ export async function analyzeWithOpenAI(
       body: JSON.stringify({
         model: options.model,
         messages: [
-          { role: "system", content: catalog.systemPrompt },
-          { role: "user", content: buildUserMessage(request) },
+          { role: "system", content: system },
+          { role: "user", content: user },
         ],
         temperature: 0,
-        max_tokens: 280,
+        max_tokens: options.maxTokens,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
@@ -212,10 +221,20 @@ export async function analyzeWithOpenAI(
   if (json.usage) {
     const u = json.usage;
     console.log(
-      `analyze tokens: prompt=${u.prompt_tokens} cached=${u.prompt_tokens_details?.cached_tokens ?? 0} output=${u.completion_tokens}`,
+      `${options.label} tokens: prompt=${u.prompt_tokens} cached=${u.prompt_tokens_details?.cached_tokens ?? 0} output=${u.completion_tokens}`,
     );
   }
   const content = json.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new UpstreamError("model returned no content", 502);
+  return content;
+}
+
+export async function analyzeWithOpenAI(request: AnalyzeRequest, options: OpenAIOptions): Promise<Analysis> {
+  const catalog = options.catalog ?? BUNDLED_CATALOG;
+  const content = await completeJSON(catalog.systemPrompt, buildUserMessage(request), {
+    ...options,
+    maxTokens: 280,
+    label: "analyze",
+  });
   return sanitizeResult(content, catalog);
 }

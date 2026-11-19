@@ -12,6 +12,9 @@ struct ContentView: View {
                 headerSection
                 languageSelector
                 mainButton
+                if viewModel.canScanPages {
+                    PageScanSection(viewModel: viewModel)
+                }
                 statusIndicator
                 transcriptSection
                 recentEffectsSection
@@ -476,6 +479,7 @@ struct ContentView: View {
         case .cache: return .green
         case .llm: return .orange
         case .keyword: return .blue
+        case .page: return .purple
         case .noMatch: return .gray
         case .error: return .red
         }

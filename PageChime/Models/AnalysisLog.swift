@@ -16,6 +16,7 @@ struct AnalysisLog: Identifiable {
         case cache = "Cache"
         case llm = "LLM"
         case keyword = "Keyword"
+        case page = "Page"
         case noMatch = "No Match"
         case error = "Error"
     }

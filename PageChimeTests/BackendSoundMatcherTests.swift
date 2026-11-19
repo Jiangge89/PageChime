@@ -42,6 +42,24 @@ final class BackendSoundMatcherTests: XCTestCase {
         ))
     }
 
+    // MARK: - Page Analysis
+
+    func testAnalyzePageSendsPageTextAndParsesCues() async throws {
+        StubServer.routes["/v1/dev-session"] = { _ in (200, ["token": "T1", "expiresIn": 3600]) }
+        StubServer.routes["/v1/analyze-page"] = { request in
+            XCTAssertEqual(request.body["text"] as? String, "Knock, knock! The wolf howled.")
+            return (200, [
+                "cues": [["id": "door_knock", "trigger": "Knock, knock"], ["id": "wolf_howl"], ["id": "wolf_howl", "trigger": "wolf howled"]],
+                "ambience": ["night_ambience"],
+            ])
+        }
+
+        let page = try await matcher().analyzePage(text: "Knock, knock! The wolf howled.", context: "")
+        XCTAssertEqual(page.cues.map(\.id), ["door_knock", "wolf_howl"], "Cues without a trigger are dropped")
+        XCTAssertEqual(page.ambience, ["night_ambience"])
+        XCTAssertEqual(page.upcoming, [])
+    }
+
     // MARK: - Analysis
 
     func testAnalyzeSendsTextWithTokenAndParsesResult() async throws {

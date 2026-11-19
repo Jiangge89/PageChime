@@ -10,6 +10,8 @@ final class Backend {
     let api: BackendHTTP
     /// Longer timeout for library and audio downloads.
     let downloads: BackendHTTP
+    /// Page analysis runs before reading starts and may take several seconds.
+    let pages: BackendHTTP
     let sessions: SessionProviding
 
     init(
@@ -19,7 +21,9 @@ final class Backend {
         sessions: SessionProviding? = nil
     ) {
         api = BackendHTTP(baseURL: baseURL, session: apiSession ?? Self.makeSession(timeout: 6))
-        downloads = BackendHTTP(baseURL: baseURL, session: downloadSession ?? Self.makeSession(timeout: 30))
+        let slowSession = downloadSession ?? Self.makeSession(timeout: 30)
+        downloads = BackendHTTP(baseURL: baseURL, session: slowSession)
+        pages = BackendHTTP(baseURL: baseURL, session: slowSession)
         self.sessions = sessions ?? AppAttestSessionProvider(http: api)
     }
 

@@ -6,6 +6,7 @@
  *   2. POST /v1/attest  (new key)    → App Attest attestation  → session token
  *      POST /v1/assert  (known key)  → App Attest assertion    → session token
  *   3. POST /v1/analyze (Bearer)     → sound analysis for new story text
+ *      POST /v1/analyze-page (Bearer) → sound cues for a whole scanned page
  *      GET  /v1/library (Bearer)     → cloud sound library manifest
  *      GET  /v1/sounds/<file> (Bearer) → audio file from the library
  *
@@ -16,7 +17,8 @@ import { AttestationError, verifyAssertion, verifyAttestation, type AttestedKey 
 import { analyzeWithOpenAI, parseAnalyzeRequest, SoundCatalog, UpstreamError } from "./analyze";
 import { APPLE_APP_ATTEST_ROOT_PEM } from "./appleRoot";
 import { fromBase64, pemToDer, sha256, textEncoder, toBase64Url } from "./encoding";
-import { recordGaps, type GapDatabase } from "./gaps";
+import { recordGaps, type GapDatabase, type SoundGap } from "./gaps";
+import { analyzePageWithOpenAI, parsePageRequest } from "./page";
 import { FILE_PATTERN, loadManifest, mergedCatalog, SOUND_PREFIX, type ObjectStore } from "./library";
 import { createChallenge, createSessionToken, verifyChallenge, verifySessionToken, type Session } from "./tokens";
 
@@ -67,6 +69,16 @@ async function currentCatalog(env: Env): Promise<SoundCatalog> {
     catalogCache = { json, catalog: new SoundCatalog(mergedCatalog(manifest)) };
   }
   return catalogCache.catalog;
+}
+
+/** Counts sounds the library lacks, after the response if the runtime allows. */
+async function logMissing(env: Env, options: RequestOptions, missing: SoundGap[], subject: string) {
+  if (!env.GAPS || missing.length === 0) return;
+  const logging = recordGaps(env.GAPS, missing, subject).catch((e) =>
+    console.warn("gap logging failed", e instanceof Error ? e.message : e),
+  );
+  if (options.waitUntil) options.waitUntil(logging);
+  else await logging;
 }
 
 async function sessionFrom(request: Request, env: Env): Promise<Session | null> {
@@ -242,17 +254,36 @@ export async function handleRequest(request: Request, env: Env, options: Request
           model: env.OPENAI_MODEL || "gpt-4o-mini",
           catalog: await currentCatalog(env),
         });
-        if (env.GAPS && missing.length > 0) {
-          const logging = recordGaps(env.GAPS, missing, session.sub).catch((e) =>
-            console.warn("gap logging failed", e instanceof Error ? e.message : e),
-          );
-          if (options.waitUntil) options.waitUntil(logging);
-          else await logging;
-        }
+        await logMissing(env, options, missing, session.sub);
         return json(result);
       } catch (e) {
         if (e instanceof UpstreamError) {
           console.warn(`analyze failed: ${e.message}`);
+          return error(e.status, e.message);
+        }
+        throw e;
+      }
+    }
+
+    case "/v1/analyze-page": {
+      const session = await sessionFrom(request, env);
+      if (!session) return error(401, "session invalid or expired");
+      if (!(await env.DEVICE_LIMITER.limit({ key: session.sub })).success) return error(429, "rate limited");
+
+      const pageRequest = parsePageRequest(await readJson(request));
+      if (!pageRequest) return error(400, "text is required");
+
+      try {
+        const { missing, ...result } = await analyzePageWithOpenAI(pageRequest, {
+          apiKey: env.OPENAI_API_KEY,
+          model: env.OPENAI_MODEL || "gpt-4o-mini",
+          catalog: await currentCatalog(env),
+        });
+        await logMissing(env, options, missing, session.sub);
+        return json(result);
+      } catch (e) {
+        if (e instanceof UpstreamError) {
+          console.warn(`page analysis failed: ${e.message}`);
           return error(e.status, e.message);
         }
         throw e;

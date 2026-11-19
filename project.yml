@@ -34,6 +34,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: GY7SG2DH82
         GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_NSCameraUsageDescription: "PageChime can scan the page you're about to read so its sounds play the moment you reach them. The text is read on your device; the photo is never uploaded or saved."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "PageChime listens to your storytelling to play matching sound effects. Your voice is processed during the reading session and is never saved."
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "PageChime uses speech recognition to detect story events like animals, weather, and actions, so it can play matching sounds. Transcripts are not saved."
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true

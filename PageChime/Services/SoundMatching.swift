@@ -14,6 +14,21 @@ struct SoundAnalysis {
     var upcoming: [String] = []
 }
 
+/// Sound cues for a whole book page, found before it is read aloud.
+struct PageAnalysis {
+    /// One-shots and mid-page ambience changes, in reading order, each with
+    /// the phrase from the page that sets it off.
+    let cues: [LLMSoundMatch]
+    /// Ambience at the top of the page, or nil to keep the current scene.
+    let ambience: [String]?
+    /// Sounds the following pages will probably need.
+    let upcoming: [String]
+}
+
+protocol PageAnalyzing: AnyObject {
+    func analyzePage(text: String, context: String) async throws -> PageAnalysis
+}
+
 protocol SoundMatching: AnyObject {
     /// - Parameters:
     ///   - text: Newly read text.
