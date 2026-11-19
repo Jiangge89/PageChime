@@ -34,7 +34,7 @@ final class LiveBackendTests: XCTestCase {
         XCTAssertGreaterThan(library.version, 0, "Library manifest should load")
 
         let ambience = try XCTUnwrap(
-            ["test_brook"].first { library.info(for: $0)?.isAmbience == true },
+            ["cave_drips", "campfire", "test_brook"].first { library.hasCloudVariants($0) && library.info(for: $0)?.isAmbience == true },
             "Upload the test library first"
         )
         let url = try await library.fetchFile(for: ambience)

@@ -1,0 +1,80 @@
+[
+  {
+    "id": "wolf_howl", "kind": "oneShot", "name": "wolf", "category": "animal",
+    "description": "a wolf howling at the moon",
+    "prompt": "A single wolf howling at the moon in a quiet night forest, long mournful howl with natural reverb, mysterious but not too scary. No music, no voices.",
+    "variants": 3, "duration": 4
+  },
+  {
+    "id": "wolf_growl", "kind": "oneShot", "name": "wolf", "category": "animal",
+    "description": "a big bad wolf growling",
+    "prompt": "A big wolf growling low and menacing, close up, short snarl, cartoonish storybook villain rather than gory. No music, no voices.",
+    "variants": 3, "duration": 2.5
+  },
+  {
+    "id": "thunder", "kind": "oneShot", "name": "thunder", "category": "weather",
+    "description": "thunder rumbling",
+    "prompt": "A sharp crack of lightning followed by deep rolling thunder fading into the distance, cinematic, wide stereo. No rain, no music.",
+    "variants": 3, "duration": 4
+  },
+  {
+    "id": "door_creak", "kind": "oneShot", "name": "door", "category": "object",
+    "description": "an old wooden door creaking open",
+    "prompt": "An old wooden door slowly creaking open on rusty hinges, spooky storybook castle, dry and close. No music, no voices.",
+    "variants": 3, "duration": 2.5
+  },
+  {
+    "id": "dragon_roar", "kind": "oneShot", "name": "dragon", "category": "animal",
+    "description": "a dragon roaring",
+    "prompt": "A large fantasy dragon roaring with a whoosh of fire breath, epic but friendly enough for a children's story, wide stereo. No music, no voices.",
+    "variants": 3, "duration": 3
+  },
+  {
+    "id": "magic_sparkle", "kind": "oneShot", "name": "magic", "category": "action",
+    "description": "a magic spell, fairy sparkle, wand twinkle",
+    "prompt": "A magical fairy wand sparkle: bright twinkling chimes rising upward with a soft shimmer, whimsical and gentle. No music melody, no voices.",
+    "variants": 3, "duration": 2
+  },
+  {
+    "id": "giant_footsteps", "kind": "oneShot", "name": "giant", "category": "action",
+    "description": "a giant's heavy stomping footsteps",
+    "prompt": "Three slow heavy footsteps of a giant stomping on the ground, deep booming thuds that shake the earth, slight debris rattle. No music, no voices.",
+    "variants": 3, "duration": 3
+  },
+  {
+    "id": "pig_oink", "kind": "oneShot", "name": "pig", "category": "animal",
+    "description": "a pig oinking",
+    "prompt": "A cheerful little pig oinking and snorting a few times, close up, farmyard. No music, no voices.",
+    "variants": 3, "duration": 2
+  },
+  {
+    "id": "storm", "kind": "ambience", "name": "storm", "category": "weather",
+    "description": "thunderstorm, heavy rain and wind",
+    "prompt": "Heavy rain pouring down during a thunderstorm, steady downpour on leaves and ground, gusts of wind and occasional distant rolling thunder, immersive wide stereo, seamless loop. No music, no voices.",
+    "variants": 2, "duration": 30
+  },
+  {
+    "id": "ocean_waves", "kind": "ambience", "name": "ocean", "category": "environment",
+    "description": "ocean or sea atmosphere",
+    "prompt": "Gentle ocean waves rolling onto a sandy beach, soft foam hiss, a few distant seagulls, calm and peaceful, wide stereo, seamless loop. No music, no voices.",
+    "variants": 2, "duration": 30
+  },
+  {
+    "id": "night_ambience", "kind": "ambience", "name": "night", "category": "environment",
+    "description": "nighttime crickets and quiet",
+    "prompt": "A calm night in the countryside: crickets chirping, soft breeze, a distant owl now and then, quiet and sleepy, wide stereo, seamless loop. No music, no voices.",
+    "variants": 2, "duration": 30
+  },
+  {
+    "id": "cave_drips", "kind": "ambience", "name": "cave", "category": "environment",
+    "description": "inside a cave, water dripping and echoing",
+    "prompt": "Inside a large dark cave: slow water drips echoing off stone walls, faint low air rumble, mysterious reverb, wide stereo, seamless loop. No music, no voices.",
+    "variants": 2, "duration": 30
+  },
+  {
+    "id": "campfire", "kind": "ambience", "name": "campfire", "category": "environment",
+    "description": "a crackling campfire at night",
+    "prompt": "A cozy campfire crackling and popping outdoors at night, gentle flames, occasional log shifting, warm and close, seamless loop. No music, no voices.",
+    "variants": 2, "duration": 30
+  }
+]

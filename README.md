@@ -177,6 +177,24 @@ The script converts each file to 44.1 kHz stereo AAC, normalizes loudness (one-s
 
 A cloud sound may reuse a bundled ID (e.g. `thunder`) to add variants: the bundled version plays at once and a cloud variant is downloaded for next time.
 
+### Generating Sounds with ElevenLabs
+
+Batches of new sounds are generated from a prompt list such as `backend/library/batches/test-1.json` (an id, kind, name, category, description, ElevenLabs `prompt`, `variants` and `duration` per sound). Put `ELEVENLABS_API_KEY=...` in `backend/.env.local` (gitignored), then:
+
+```bash
+cd backend
+node scripts/generate-sounds.mjs library/batches/test-1.json --dry-run   # count variants and credits
+node scripts/generate-sounds.mjs library/batches/test-1.json             # generate and check
+node scripts/build-library.mjs library-src/test-1 --upload local
+```
+
+Each sound gets several variants, and the app picks a different one each time it plays, so repeated sounds don't feel canned. There is no manual review step: every variant is checked automatically (`scripts/audio-qc.mjs`) and the results go to `qc.json`.
+
+- **Rejected** (moved to `rejected/`, left out of `sounds.json`): almost silent, much shorter than requested, or mostly silence. Run the script again to regenerate only those.
+- **Kept with a warning**: very quiet (normalizing adds a lot of gain), clipping, a late start, or an ambience loop whose first and last seconds differ a lot. `review.html` lists only these, for an optional listen.
+
+Runs are resumable: existing files are never generated twice. `--check-only` reruns the checks without calling ElevenLabs. Sound Effects cost 40 credits per second of audio; the 13-sound test batch (34 variants) used about 14,800 credits and comes to about 7 MB in the library. The app downloads variants only as they are needed, into a 200 MB cache.
+
 ## How to Add a Bundled Sound
 
 1. Place a WAV file in `PageChime/Resources/Sounds/` (e.g. `wolf_howl.wav`) and regenerate the project (`xcodegen generate`).
