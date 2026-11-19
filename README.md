@@ -68,11 +68,22 @@ Speech, playback and analysis are injected via protocols (`SpeechRecognizing`, `
 ## How Analysis Works
 
 1. **Instant keyword path** (`StoryEventEngine`): every partial transcript is scanned locally, so obvious sounds ("frog", "thunder", "knock") play with no network wait.
-2. **Segments**: unanalyzed text is handed on after a 0.6s pause, or as soon as 10 (Chinese) / 30 (English) new characters arrive.
+2. **Segments** (`SegmentPolicy`): every LLM call repeats the whole sound catalog, so text is sent in sentence-sized pieces rather than every few words. New text goes out at once when it reaches 60 characters (Chinese: 20), or, in English, when it names a cloud sound ("wolf", "dragon") and is at least 12 characters, since only the LLM can pick those. Otherwise it waits for the reader to pause: after 0.6s if at least 30 characters are new (Chinese: 10), after 1.2s if at least 12 (4), and after 2.5s for anything.
 3. **Cache** (`SoundCache`): each segment is normalized and checked against trigger phrases learned from earlier LLM results; hits play instantly.
 4. **Scene LLM** (`BackendSoundMatcher` → PageChime API): every segment is also sent, via the backend, to `gpt-4o-mini` with the previous ~300 characters as context. It returns one-shot sounds for the new text and the ambience beds for the current scene (or `null` to keep the scene). Requests run concurrently and are never cancelled by newer speech.
 5. **Merging**: LLM one-shots already played by the keyword path for that text are skipped; one-shots arriving more than 4s late are dropped; ambience is always applied, since it follows the scene rather than a single word.
 6. **Prefetch**: the LLM also lists up to 6 `upcoming` sounds the story makes likely soon (the wolf once Red Riding Hood enters the forest, the giant once Jack climbs the beanstalk). `SoundLibrary` downloads one variant of each that isn't on disk yet, two at a time in the background, so cloud sounds are usually ready before the text reaches them. The debug panel shows what was prefetched.
+
+### Analysis Cost
+
+Measured on a 1,400-character story read through the local API with `gpt-4o-mini` (about 14 characters per second of reading):
+
+| | Calls | Input tokens per call (cached) | Output tokens per call | Per hour of reading |
+|---|---|---|---|---|
+| 30-character segments, full JSON answers | 56 | 1,213 (981) | 52 | ≈ $0.29 |
+| Sentence-sized segments, empty keys left out | 33 | 1,263 (1,082) | 21 | ≈ $0.15 |
+
+The catalog part of the prompt is identical on every call, so OpenAI serves it from its prompt cache at half price. It is still about two thirds of what's left, so the cost grows with the size of the catalog more than anything else. The worker logs token counts (never text) for each call as `analyze tokens: prompt=… cached=… output=…`.
 
 ## Privacy Design
 

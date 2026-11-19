@@ -74,6 +74,7 @@ final class SoundLibraryTests: XCTestCase {
         XCTAssertEqual(library.info(for: "cave_drips")?.isAmbience, true)
         XCTAssertEqual(library.info(for: "cave_drips")?.type, .environment, "Unknown categories fall back")
         XCTAssertEqual(library.info(for: "dog_bark")?.entity, "dog", "Bundled sounds still resolve")
+        XCTAssertEqual(library.cloudSoundNames(), ["wolf"], "Only one-shot names count")
     }
 
     func testManifestPersistsAndUnchangedManifestIsNotRedownloaded() async {

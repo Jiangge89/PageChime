@@ -197,6 +197,39 @@ final class ReadingSessionViewModelTests: XCTestCase {
         try await waitUntil { self.viewModel.analysisLogs.first?.note?.contains("prefetch: wolf_growl") == true }
     }
 
+    func testLongTextAndCloudSoundNamesAreSentWithoutWaitingForAPause() async throws {
+        catalog.names = ["wolf"]
+        viewModel.segmentPolicy = { _ in SegmentPolicy(maxChars: 60, hotWordMinChars: 12, pauseTiers: [(5, 1)]) }
+
+        speech.send("Then the fox came closer")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(llm.calls.isEmpty, "Short text without a cloud sound waits for a pause")
+
+        speech.send("Then the fox came closer and the wolf")
+        try await waitUntil(timeout: 1) { self.llm.calls.count == 1 }
+
+        let long = "Then the fox came closer and the wolf"
+            + " walked slowly all the way along the river bank to the old mill"
+        speech.send(long)
+        try await waitUntil(timeout: 1) { self.llm.calls.count == 2 }
+        XCTAssertEqual(llm.calls.last, String(long.dropFirst("Then the fox came closer and the wolf".count)))
+    }
+
+    func testShortFragmentWaitsForALongerPause() async throws {
+        viewModel.segmentPolicy = { _ in
+            SegmentPolicy(maxChars: 60, hotWordMinChars: 12, pauseTiers: [(0.1, 30), (0.3, 12), (0.6, 1)])
+        }
+        speech.send("And then")
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertTrue(llm.calls.isEmpty, "Eight characters are too few for the first two pauses")
+        try await waitUntil(timeout: 2) { self.llm.calls == ["And then"] }
+
+        speech.send("And then the rain stopped")
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(llm.calls.count, 1, "17 new characters wait past the first pause")
+        try await waitUntil(timeout: 2) { self.llm.calls.count == 2 }
+    }
+
     func testSpeechActivityIsReportedForDucking() async throws {
         speech.send("Once upon a time")
         try await waitUntil { self.player.speechActivityCount > 0 }
@@ -249,6 +282,8 @@ private final class FakeSpeech: SpeechRecognizing {
 /// Bundled sounds plus whatever a test adds as "cloud" sounds.
 private final class FakeCatalog: SoundCatalogProviding {
     var cloud: [String: SoundInfo] = [:]
+    var names: Set<String> = []
+    func cloudSoundNames() -> Set<String> { names }
     func info(for soundID: String) -> SoundInfo? {
         BundledSoundCatalog.shared.info(for: soundID) ?? cloud[soundID]
     }

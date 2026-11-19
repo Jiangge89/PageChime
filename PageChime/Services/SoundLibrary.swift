@@ -38,6 +38,13 @@ struct SoundInfo: Equatable {
 protocol SoundCatalogProviding: AnyObject {
     /// Nil for sound IDs neither bundled nor in the cloud library.
     func info(for soundID: String) -> SoundInfo?
+    /// Lowercased names of cloud one-shots ("wolf", "dragon"): words worth
+    /// sending to the LLM straight away, since only it can pick those sounds.
+    func cloudSoundNames() -> Set<String>
+}
+
+extension SoundCatalogProviding {
+    func cloudSoundNames() -> Set<String> { [] }
 }
 
 /// Audio files for sounds in the cloud library.
@@ -96,6 +103,7 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource, SoundPrefetch
     private var manifest: LibraryManifest = .empty
     private var etag: String?
     private var soundsByID: [String: LibrarySound] = [:]
+    private var oneShotNames: Set<String> = []
     private var lastFile: [String: String] = [:]
     private var inFlight: [String: Task<URL, Error>] = [:]
 
@@ -171,6 +179,9 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource, SoundPrefetch
             self.manifest = manifest
             self.etag = etag
             soundsByID = Dictionary(manifest.sounds.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            oneShotNames = Set(manifest.sounds.filter { $0.kind == .oneShot }.flatMap {
+                $0.name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+            })
         }
     }
 
@@ -185,6 +196,10 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource, SoundPrefetch
             entity: sound.name,
             intensity: .normal
         )
+    }
+
+    func cloudSoundNames() -> Set<String> {
+        lock.withLock { oneShotNames }
     }
 
     // MARK: - CloudSoundSource

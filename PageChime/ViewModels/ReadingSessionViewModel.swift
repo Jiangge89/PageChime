@@ -2,6 +2,31 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// When newly read text is sent for LLM analysis. Each call repeats the
+/// whole sound catalog, so fewer, longer segments cost less; sending early
+/// when a cloud sound is named keeps those sounds on time.
+struct SegmentPolicy {
+    /// Send at once when this much new text has built up.
+    var maxChars: Int
+    /// Send at once when the new text names a cloud sound and is at least
+    /// this long (a few words after the name help the LLM).
+    var hotWordMinChars: Int
+    /// After the reader pauses this long, send if at least this much is new.
+    /// Short pauses are often mid-sentence; longer ones end a sentence.
+    var pauseTiers: [(delay: TimeInterval, minChars: Int)]
+
+    static func standard(for language: ReadingLanguage) -> SegmentPolicy {
+        switch language {
+        case .chinese:
+            // Chinese recognition has no punctuation and no spaces, and
+            // sound names are English, so pauses and length decide.
+            return SegmentPolicy(maxChars: 20, hotWordMinChars: .max, pauseTiers: [(0.6, 10), (1.2, 4), (2.5, 1)])
+        default:
+            return SegmentPolicy(maxChars: 60, hotWordMinChars: 12, pauseTiers: [(0.6, 30), (1.2, 12), (2.5, 1)])
+        }
+    }
+}
+
 @MainActor
 final class ReadingSessionViewModel: ObservableObject {
     @Published var language: ReadingLanguage = .english
@@ -12,6 +37,7 @@ final class ReadingSessionViewModel: ObservableObject {
     @Published var analysisLogs: [AnalysisLog] = []
 
     var currentTime: () -> Date = { Date() }
+    var segmentPolicy: (ReadingLanguage) -> SegmentPolicy = SegmentPolicy.standard
 
     private let speechService: SpeechRecognizing
     private let eventEngine: StoryEventEngine
@@ -40,7 +66,6 @@ final class ReadingSessionViewModel: ObservableObject {
     /// One-shot sounds from an LLM result older than this are dropped:
     /// by then the reader has moved on. Ambience is still applied.
     private let staleResultThreshold: TimeInterval = 4
-    private let segmentDebounce: TimeInterval = 0.6
     /// Characters of earlier story sent along with each segment.
     private let contextLength = 300
 
@@ -202,27 +227,48 @@ final class ReadingSessionViewModel: ObservableObject {
     // MARK: - Cache / LLM Path
 
     private func scheduleSegmentAnalysis(_ text: String) {
-        let newChars = text.count - dispatchedLength
-        let threshold = language == .chinese ? 10 : 30
+        let policy = segmentPolicy(language)
+        let newText = text.dropFirst(dispatchedLength)
         let triggerTime = currentTime()
 
         segmentWorkItem?.cancel()
         segmentWorkItem = nil
 
-        if newChars >= threshold {
+        if newText.count >= policy.maxChars
+            || (newText.count >= policy.hotWordMinChars && namesCloudSound(newText)) {
             dispatchSegment(text, triggeredAt: triggerTime)
             return
         }
+        schedulePauseTier(0, text: text, policy: policy, triggeredAt: triggerTime)
+    }
 
+    /// Waits for the next pause tier; sends the text if enough is new by then,
+    /// otherwise waits for the next, longer tier.
+    private func schedulePauseTier(_ index: Int, text: String, policy: SegmentPolicy, triggeredAt: Date) {
+        guard index < policy.pauseTiers.count else { return }
+        let tier = policy.pauseTiers[index]
+        let previousDelay = index > 0 ? policy.pauseTiers[index - 1].delay : 0
         let capturedSession = sessionID
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionID == capturedSession else { return }
-                self.dispatchSegment(text, triggeredAt: triggerTime)
+                if text.count - self.dispatchedLength >= tier.minChars {
+                    self.dispatchSegment(text, triggeredAt: triggeredAt)
+                } else {
+                    self.schedulePauseTier(index + 1, text: text, policy: policy, triggeredAt: triggeredAt)
+                }
             }
         }
         segmentWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + segmentDebounce, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (tier.delay - previousDelay), execute: workItem)
+    }
+
+    private func namesCloudSound(_ text: Substring) -> Bool {
+        let names = catalog.cloudSoundNames()
+        guard !names.isEmpty else { return false }
+        return text.lowercased()
+            .split(whereSeparator: { !$0.isLetter })
+            .contains { names.contains(String($0)) }
     }
 
     /// Hands the not-yet-analyzed tail of the transcript to the cache and the

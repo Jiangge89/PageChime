@@ -75,12 +75,13 @@ Ambience beds (looping background for the current setting):
 ${catalogSection(sounds, true)}
 
 Return JSON: {"sounds": [{"id": "sound_id", "trigger": "phrase"}], "ambience": ["sound_id"] or null, "upcoming": ["sound_id"], "missing": [{"id": "new_sound_id", "kind": "oneShot" or "ambience", "description": "..."}]}
+Leave out "sounds", "upcoming" and "missing" when empty, and "ambience" when null, so most answers are just {}.
 
 Rules:
 - "sounds": one-shots for things happening in the NEW text only, never for things only in the context. Skip negated events (e.g. "not a dog", "没有狗"). At most ${MAX_SOUNDS}.
 - "trigger": the shortest phrase copied verbatim from the new text that identifies the sound.
 - "ambience": 0-${MAX_AMBIENCE} ambience ids for where the story is at the end of the new text. Use the context to understand the setting, and keep the same set while the setting doesn't change. Return null if the new text says nothing about the setting. Return [] only if the story clearly moves somewhere quiet.
-- "upcoming": 0-${MAX_UPCOMING} ids (one-shots or ambience) the new text doesn't trigger but the next pages probably will: sounds of characters and places already in the story and, if you recognise a well-known tale, of its later scenes (e.g. the giant in Jack and the Beanstalk). They are downloaded in advance, so prefer sounds specific to this story over generic ones like footsteps. [] if nothing stands out.
+- "upcoming": 0-${MAX_UPCOMING} ids (one-shots or ambience) the new text doesn't trigger but the next pages probably will: sounds of characters and places already in the story and, if you recognise a well-known tale, of its later scenes (e.g. the giant in Jack and the Beanstalk). They are downloaded in advance, so prefer sounds specific to this story over generic ones like footsteps. Only when the new text brings in a new character, place or turn of events; otherwise leave it out.
 - "missing": at most ${MAX_MISSING} sounds the new text clearly calls for that no id above fits, e.g. {"id": "trumpet_fanfare", "kind": "oneShot", "description": "a royal trumpet fanfare"}. Report one whenever an animal, voice, object or place in the new text would make a distinct sound and no id is a real match, even if you return nothing else. Don't stand in a loosely related id (no magic_sparkle for a witch's cackle): report it as missing instead. Give a short new snake_case id and a short English description.
 - Apart from "missing", only use ids from the lists above.`;
 }
@@ -202,7 +203,18 @@ export async function analyzeWithOpenAI(
     throw new UpstreamError(`model returned ${response.status}`, response.status === 429 ? 429 : 502);
   }
 
-  const json = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+  const json = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+  };
+  // Token counts only, never text: what each call costs, and whether the
+  // system prompt is being served from OpenAI's prompt cache.
+  if (json.usage) {
+    const u = json.usage;
+    console.log(
+      `analyze tokens: prompt=${u.prompt_tokens} cached=${u.prompt_tokens_details?.cached_tokens ?? 0} output=${u.completion_tokens}`,
+    );
+  }
   const content = json.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new UpstreamError("model returned no content", 502);
   return sanitizeResult(content, catalog);
