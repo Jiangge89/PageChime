@@ -64,14 +64,51 @@ final class StoryEventEngine {
         cooldowns.removeAll()
     }
 
+    /// A keyword found in the text: the sound it sets off and where the
+    /// keyword ends (in characters from the start of the text).
+    struct Match {
+        let soundID: String
+        let end: Int
+    }
+
+    /// Every non-negated keyword occurrence, in text order. Unlike
+    /// `analyze`, there's no cooldown: the caller tracks which occurrences
+    /// it already played.
+    func matches(in text: String, language: ReadingLanguage) -> [Match] {
+        let lower = text.lowercased()
+        var found: [(match: Match, start: Int)] = []
+        for trigger in triggers {
+            guard let keywords = trigger.keywords[language.rawValue] else { continue }
+            let excludes = trigger.excludePatterns[language.rawValue]?.map { $0.lowercased() } ?? []
+            var ends = Set<Int>()
+            for keyword in keywords {
+                for range in allMatches(of: keyword.lowercased(), in: lower, excludes: excludes, language: language)
+                where !isNegated(at: range, in: lower, language: language) {
+                    let end = lower.distance(from: lower.startIndex, to: range.upperBound)
+                    // "dog" and "doggy" style overlaps count once.
+                    guard ends.insert(end).inserted else { continue }
+                    found.append((Match(soundID: trigger.soundID, end: end), lower.distance(from: lower.startIndex, to: range.lowerBound)))
+                }
+            }
+        }
+        return found.sorted { $0.start < $1.start }.map(\.match)
+    }
+
     // MARK: - Keyword Matching
 
-    /// First occurrence of `keyword` that isn't inside an exclude pattern.
-    /// English keywords must start at a word boundary, so "then" doesn't
-    /// match "hen" and "attic" doesn't match "tic".
     private func firstMatch(
         of keyword: String, in text: String, excludes: [String], language: ReadingLanguage
     ) -> Range<String.Index>? {
+        allMatches(of: keyword, in: text, excludes: excludes, language: language, limit: 1).first
+    }
+
+    /// Occurrences of `keyword` that aren't inside an exclude pattern.
+    /// English keywords must start at a word boundary, so "then" doesn't
+    /// match "hen" and "attic" doesn't match "tic".
+    private func allMatches(
+        of keyword: String, in text: String, excludes: [String], language: ReadingLanguage, limit: Int = .max
+    ) -> [Range<String.Index>] {
+        var results: [Range<String.Index>] = []
         var excludedRanges: [Range<String.Index>] = []
         for exclude in excludes {
             var searchStart = text.startIndex
@@ -89,11 +126,12 @@ final class StoryEventEngine {
                 range.lowerBound >= excludeRange.lowerBound && range.upperBound <= excludeRange.upperBound
             }
             if !isExcluded, language != .english || startsWord(range, in: text) {
-                return range
+                results.append(range)
+                if results.count >= limit { break }
             }
             searchStart = text.index(after: range.lowerBound)
         }
-        return nil
+        return results
     }
 
     private func startsWord(_ range: Range<String.Index>, in text: String) -> Bool {

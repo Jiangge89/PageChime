@@ -16,6 +16,12 @@ final class SoundLibraryTests: XCTestCase {
                 ],
             ],
             [
+                // A bundled sound with generated variants: not a "cloud name".
+                "id": "dog_bark", "kind": "oneShot", "name": "dog barking", "category": "animal",
+                "description": "dog barking",
+                "variants": [["file": "dog_bark.dddd.m4a", "duration": 2.0, "bytes": 4]],
+            ],
+            [
                 "id": "cave_drips", "kind": "ambience", "name": "cave", "category": "spaceship",
                 "description": "dripping cave",
                 "variants": [["file": "cave_drips.cccc.m4a", "duration": 60.0, "bytes": 4]],
@@ -31,7 +37,7 @@ final class SoundLibraryTests: XCTestCase {
             if request.headers["If-None-Match"] == "\"v7\"" { return (304, Data(), ["ETag": "\"v7\""]) }
             return (200, try! JSONSerialization.data(withJSONObject: manifest), ["ETag": "\"v7\""])
         }
-        for file in ["wolf_howl.aaaa.m4a", "wolf_howl.bbbb.m4a", "cave_drips.cccc.m4a"] {
+        for file in ["wolf_howl.aaaa.m4a", "wolf_howl.bbbb.m4a", "dog_bark.dddd.m4a", "cave_drips.cccc.m4a"] {
             StubServer.dataRoutes["/v1/sounds/\(file)"] = { _ in (200, Data(file.utf8), [:]) }
         }
     }
@@ -74,7 +80,7 @@ final class SoundLibraryTests: XCTestCase {
         XCTAssertEqual(library.info(for: "cave_drips")?.isAmbience, true)
         XCTAssertEqual(library.info(for: "cave_drips")?.type, .environment, "Unknown categories fall back")
         XCTAssertEqual(library.info(for: "dog_bark")?.entity, "dog", "Bundled sounds still resolve")
-        XCTAssertEqual(library.cloudSoundNames(), ["wolf"], "Only one-shot names count")
+        XCTAssertEqual(library.cloudSoundNames(), ["wolf"], "Only names of one-shots the keyword path can't play count")
     }
 
     func testManifestPersistsAndUnchangedManifestIsNotRedownloaded() async {

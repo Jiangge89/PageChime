@@ -39,8 +39,12 @@ final class SoundEffectPlayer: SoundEffectPlaying {
     private static let bundledVoiceCount = 8
     private static let cloudVoiceCount = 6
     static let maxBeds = 3
-    /// How long a bed keeps playing after it was last requested.
-    private let ambienceHold: TimeInterval = 45
+    /// Background sounds play until the scene changes. They fade out only
+    /// once nobody has read for this long (the book was put down), counted
+    /// from the last speech or the last time the bed was asked for.
+    var quietTimeout: TimeInterval = 120
+    /// A background sound still downloading is dropped after this long.
+    private let pendingTimeout: TimeInterval = 30
     private let fadeInDuration: TimeInterval = 1.5
     private let fadeOutDuration: TimeInterval = 2.5
     private let duckedLevel: Float = 0.5
@@ -72,7 +76,8 @@ final class SoundEffectPlayer: SoundEffectPlaying {
         /// Current and target fade level, 0...1.
         var level: Float = 0
         var target: Float = 0
-        var holdUntil = Date.distantPast
+        /// When the scene last asked for this bed.
+        var lastRequested = Date.distantPast
 
         // Streamed-loop state.
         var activeFileNode = 0
@@ -219,6 +224,14 @@ final class SoundEffectPlayer: SoundEffectPlaying {
             startVoice(in: cloudVoices, buffer: buffer, event: event)
             return
         }
+        // The copy shipped with the app plays at full quality right away.
+        if let url = AudioBufferCache.bundledFile(for: soundID), let buffer = cloudBuffer(url) {
+            startVoice(in: cloudVoices, buffer: buffer, event: event)
+            if let cloud, cloud.hasCloudVariants(soundID) {
+                Task { _ = try? await cloud.fetchFile(for: soundID) }
+            }
+            return
+        }
         if let buffer = buffers.buffer(for: soundID) {
             startVoice(in: bundledVoices, buffer: buffer, event: event)
             // Fetch a cloud variant for next time.
@@ -276,21 +289,29 @@ final class SoundEffectPlayer: SoundEffectPlaying {
 
     private func addBed(_ event: StoryEvent) {
         let soundID = event.soundID
-        let holdUntil = Date().addingTimeInterval(ambienceHold)
+        let holdUntil = Date().addingTimeInterval(pendingTimeout)
 
         if let bed = beds.first(where: { $0.soundID == soundID }) {
-            bed.holdUntil = holdUntil
+            bed.lastRequested = Date()
             bed.target = 1
             startFadeTimerIfNeeded()
             return
         }
 
         if let cloud, let url = cloud.localFile(for: soundID), let file = try? AVAudioFile(forReading: url) {
-            startBed(event, holdUntil: holdUntil) { bed in self.startFileBed(bed, file: file) }
+            startBed(event) { bed in self.startFileBed(bed, file: file) }
+            return
+        }
+        // The copy shipped with the app streams with the same crossfaded loop.
+        if let url = AudioBufferCache.bundledFile(for: soundID), let file = try? AVAudioFile(forReading: url) {
+            startBed(event) { bed in self.startFileBed(bed, file: file) }
+            if let cloud, cloud.hasCloudVariants(soundID) {
+                Task { _ = try? await cloud.fetchFile(for: soundID) }
+            }
             return
         }
         if let buffer = buffers.buffer(for: soundID) {
-            startBed(event, holdUntil: holdUntil) { bed in
+            startBed(event) { bed in
                 bed.source = .buffer
                 bed.bufferNode.scheduleBuffer(buffer, at: nil, options: .loops)
                 bed.bufferNode.play()
@@ -315,22 +336,22 @@ final class SoundEffectPlayer: SoundEffectPlaying {
                   Date() < pending.holdUntil,
                   let url, let file = try? AVAudioFile(forReading: url)
             else { return }
-            self.startBed(pending.event, holdUntil: pending.holdUntil) { bed in self.startFileBed(bed, file: file) }
+            self.startBed(pending.event) { bed in self.startFileBed(bed, file: file) }
         }
     }
 
     /// Takes a free (or the least needed) bed and starts it fading in.
-    private func startBed(_ event: StoryEvent, holdUntil: Date, start: (Bed) -> Void) {
+    private func startBed(_ event: StoryEvent, start: (Bed) -> Void) {
         guard ensureRunning() else { return }
         let bed = beds.first { $0.soundID == nil }
             ?? beds.filter { $0.target == 0 }.min { $0.level < $1.level }
-            ?? beds.min { $0.holdUntil < $1.holdUntil }!
+            ?? beds.min { $0.lastRequested < $1.lastRequested }!
 
         resetBed(bed)
         bed.soundID = event.soundID
         bed.gain = multiplier(event.intensity)
         bed.target = 1
-        bed.holdUntil = holdUntil
+        bed.lastRequested = Date()
         start(bed)
         applyVolume(bed)
         startFadeTimerIfNeeded()
@@ -437,7 +458,7 @@ final class SoundEffectPlayer: SoundEffectPlaying {
 
         var hasActiveBed = !pendingAmbience.isEmpty
         for bed in beds where bed.soundID != nil {
-            if now > bed.holdUntil { bed.target = 0 }
+            if now.timeIntervalSince(max(lastSpeechActivity, bed.lastRequested)) > quietTimeout { bed.target = 0 }
             let duration = bed.target > bed.level ? fadeInDuration : fadeOutDuration
             bed.level = approach(bed.level, bed.target, step: Float(tick / duration))
             advanceLoop(bed, now: now)
@@ -541,7 +562,7 @@ final class AudioBufferCache {
 
     init(
         format: AVAudioFormat = AVAudioFormat(standardFormatWithSampleRate: 22050, channels: 1)!,
-        preload: Bool = true
+        preload: Bool = false
     ) {
         self.format = format
         guard preload else { return }
@@ -560,8 +581,10 @@ final class AudioBufferCache {
     }
 
     private func preloadAll() {
-        let urls = (Bundle.main.urls(forResourcesWithExtension: "wav", subdirectory: "Sounds") ?? [])
-            + (Bundle.main.urls(forResourcesWithExtension: "wav", subdirectory: nil) ?? [])
+        let urls = Self.extensions.flatMap {
+            (Bundle.main.urls(forResourcesWithExtension: $0, subdirectory: "Sounds") ?? [])
+                + (Bundle.main.urls(forResourcesWithExtension: $0, subdirectory: nil) ?? [])
+        }
         for url in urls {
             let soundID = url.deletingPathExtension().lastPathComponent
             guard lock.withLock({ storage[soundID] }) == nil, let buffer = Self.decode(url, to: format) else { continue }
@@ -607,8 +630,21 @@ final class AudioBufferCache {
         return status == .error ? nil : output
     }
 
+    private static let extensions = ["mp3", "m4a", "wav"]
+
     private static func url(for soundID: String) -> URL? {
-        Bundle.main.url(forResource: soundID, withExtension: "wav", subdirectory: "Sounds")
-            ?? Bundle.main.url(forResource: soundID, withExtension: "wav")
+        bundledFile(for: soundID)
+    }
+
+    /// The sound's file shipped with the app (the first variant of its
+    /// generated library sound), if any.
+    static func bundledFile(for soundID: String) -> URL? {
+        for ext in extensions {
+            if let url = Bundle.main.url(forResource: soundID, withExtension: ext, subdirectory: "Sounds")
+                ?? Bundle.main.url(forResource: soundID, withExtension: ext) {
+                return url
+            }
+        }
+        return nil
     }
 }

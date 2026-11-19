@@ -360,12 +360,123 @@ final class ReadingSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.state, .ready)
     }
 
+    func testBackgroundSoundStartedByAKeywordShowsAsTheScene() async throws {
+        llm.close()
+        speech.send("Deep in the forest")
+        try await waitUntil { self.viewModel.sceneIDs == ["forest_ambience"] }
+        XCTAssertNil(viewModel.lastOneShot, "Background sounds aren't shown as the latest sound")
+        speech.send("Deep in the forest a dog")
+        try await waitUntil { self.viewModel.lastOneShot?.soundID == "dog_bark" }
+        XCTAssertEqual(viewModel.sceneIDs, ["forest_ambience"])
+    }
+
     func testSceneIsPublishedAndClearedOnStop() async throws {
         llm.responder = { _ in SoundAnalysis(sounds: [], ambience: ["rain_light"]) }
         speech.send("It began to rain softly on the little house that night")
         try await waitUntil { self.viewModel.sceneIDs == ["rain_light"] }
         viewModel.pauseReading()
         XCTAssertEqual(viewModel.sceneIDs, [])
+    }
+
+    // MARK: - Continuity: each mention plays once
+
+    func testEarlierKeywordDoesNotReplayWhenTheNextWordIsRead() async throws {
+        llm.close()
+        speech.send("The dog")
+        try await waitUntil { self.player.playedIDs.contains("dog_bark") }
+
+        now = now.addingTimeInterval(5) // past every cooldown
+        speech.send("The dog saw an elephant")
+        try await waitUntil { self.player.playedIDs.contains("elephant_trumpet") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(player.playedIDs.filter { $0 == "dog_bark" }.count, 1, "The dog was only mentioned once")
+    }
+
+    func testEarlierChineseKeywordDoesNotReplay() async throws {
+        viewModel.changeLanguage(.chinese)
+        try await waitUntil { self.viewModel.state == .listening }
+        llm.close()
+        speech.send("小狗")
+        try await waitUntil { self.player.playedIDs.contains("dog_bark") }
+
+        now = now.addingTimeInterval(5)
+        speech.send("小狗跑过来，大象")
+        try await waitUntil { self.player.playedIDs.contains("elephant_trumpet") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(player.playedIDs.filter { $0 == "dog_bark" }.count, 1)
+    }
+
+    func testRepeatedMentionPlaysAgainAfterTheCooldown() async throws {
+        llm.close()
+        speech.send("The dog")
+        try await waitUntil { self.player.playedIDs.contains("dog_bark") }
+        now = now.addingTimeInterval(5)
+        speech.send("The dog ran home and then the dog")
+        try await waitUntil { self.player.playedIDs.filter { $0 == "dog_bark" }.count == 2 }
+    }
+
+    func testKeywordCorrectedByALaterPartialResultStillPlays() async throws {
+        llm.close()
+        speech.send("Along came an elegant")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        speech.send("Along came an elephant") // recognition revises the last word
+        try await waitUntil { self.player.playedIDs.contains("elephant_trumpet") }
+    }
+
+    func testLLMSoundFromEarlierContextIsNotReplayed() async throws {
+        // The model sees earlier text as context and may name its sounds again.
+        llm.responder = { _ in .sounds([LLMSoundMatch(id: "dog_bark", trigger: "the dog")]) }
+        speech.send("The dog slept by the fire all night long and dreamed of big bones")
+        try await waitUntil { self.llm.calls.count == 1 && !self.viewModel.analysisLogs.filter { $0.method == .llm || $0.method == .noMatch }.isEmpty }
+        now = now.addingTimeInterval(10)
+        speech.send("The dog slept by the fire all night long and dreamed of big bones. In the morning the sun came up over the quiet hills")
+        try await waitUntil { self.llm.calls.count == 2 && self.viewModel.analysisLogs.filter { $0.method == .llm || $0.method == .noMatch }.count >= 2 }
+        XCTAssertEqual(player.playedIDs.filter { $0 == "dog_bark" }.count, 1, "The second segment never mentions the dog")
+    }
+
+    // MARK: - Timeline: a page read at a natural pace
+
+    /// Reads a short story a word at a time (4 words per second, real
+    /// clock). Every keyword sound must play within 150 ms of its word, a
+    /// sound only the LLM knows within its round trip, and each mention
+    /// exactly once, in order.
+    func testReadingTimelinePlaysEachSoundOnceAndOnTime() async throws {
+        viewModel.currentTime = { Date() }
+        addCloudWolfAndCave()
+        catalog.names = ["wolf"]
+        llm.latency = 0.5
+        llm.responder = { text in
+            // Like the real model, it sometimes repeats sounds from context.
+            var sounds = [LLMSoundMatch(id: "dog_bark", trigger: "dog")]
+            if text.contains("wolf") { sounds.append(LLMSoundMatch(id: "wolf_howl", trigger: "wolf")) }
+            return .sounds(sounds)
+        }
+
+        let words = "Once upon a time a dog lived in a little house. One day an elephant came to visit. Then a wolf howled at the moon. The dog barked again."
+            .split(separator: " ").map(String.init)
+        var spokenAt: [Int: Date] = [:]
+        var transcript = ""
+        for (index, word) in words.enumerated() {
+            transcript += (transcript.isEmpty ? "" : " ") + word
+            spokenAt[index] = Date()
+            speech.send(transcript)
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        try await waitUntil(timeout: 5) { self.player.playedIDs.contains("wolf_howl") }
+        try await Task.sleep(nanoseconds: 3_000_000_000) // let late answers arrive
+
+        XCTAssertEqual(player.playedIDs.filter { ["dog_bark", "elephant_trumpet", "wolf_howl"].contains($0) },
+                       ["dog_bark", "elephant_trumpet", "wolf_howl", "dog_bark"])
+
+        func delay(of soundID: String, occurrence: Int, afterWord index: Int) -> TimeInterval {
+            let plays = player.plays.filter { $0.soundID == soundID }
+            guard plays.count > occurrence, let spoken = spokenAt[index] else { return .infinity }
+            return plays[occurrence].at.timeIntervalSince(spoken)
+        }
+        XCTAssertLessThan(delay(of: "dog_bark", occurrence: 0, afterWord: 5), 0.15)
+        XCTAssertLessThan(delay(of: "elephant_trumpet", occurrence: 0, afterWord: 14), 0.15)
+        XCTAssertLessThan(delay(of: "dog_bark", occurrence: 1, afterWord: 26), 0.15)
+        XCTAssertLessThan(delay(of: "wolf_howl", occurrence: 0, afterWord: 20), 1.2, "Hot word sent at once, plus the 0.5s round trip")
     }
 
     func testSpeechActivityIsReportedForDucking() async throws {
@@ -453,10 +564,14 @@ private final class FakePrefetcher: SoundPrefetching {
 
 private final class FakePlayer: SoundEffectPlaying {
     private(set) var playedIDs: [String] = []
+    private(set) var plays: [(soundID: String, at: Date)] = []
     private(set) var sceneCalls: [[String]] = []
     private(set) var speechActivityCount = 0
 
-    func play(event: StoryEvent) { playedIDs.append(event.soundID) }
+    func play(event: StoryEvent) {
+        playedIDs.append(event.soundID)
+        plays.append((event.soundID, Date()))
+    }
     func setAmbience(_ events: [StoryEvent]) { sceneCalls.append(events.map(\.soundID).sorted()) }
     func noteSpeechActivity() { speechActivityCount += 1 }
     func stopAll() {}
@@ -473,6 +588,8 @@ private final class FakeLLM: SoundMatching, @unchecked Sendable {
 
     var responder: (String) -> SoundAnalysis = { _ in .none }
     var error: Error?
+    /// Simulated network round trip, in seconds.
+    var latency: TimeInterval = 0
 
     var calls: [String] { lock.withLock { recordedCalls } }
     var contexts: [String] { lock.withLock { recordedContexts } }
@@ -501,6 +618,7 @@ private final class FakeLLM: SoundMatching, @unchecked Sendable {
             }
             if resumeNow { continuation.resume() }
         }
+        if latency > 0 { try? await Task.sleep(nanoseconds: UInt64(latency * 1_000_000_000)) }
         if let error { throw error }
         return responder(text)
     }

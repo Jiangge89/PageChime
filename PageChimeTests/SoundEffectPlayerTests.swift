@@ -45,6 +45,26 @@ final class SoundEffectPlayerTests: XCTestCase {
         XCTAssertTrue(player.activeAmbienceIDs.contains("farm_ambience"), "Newest bed should replace the oldest")
     }
 
+    /// Background sounds don't expire on a timer: they hold while reading
+    /// goes on and fade only once the reader has been quiet for a while.
+    func testBackgroundSoundHoldsWhileReadingAndFadesWhenQuiet() {
+        let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false), catalog: BundledSoundCatalog.shared, cloud: nil)
+        defer { player.stopAll() }
+        player.quietTimeout = 0.5
+        player.setAmbience([event("rain_light")])
+
+        // Reading continues well past the quiet timeout.
+        for _ in 0..<8 {
+            player.noteSpeechActivity()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertEqual(player.activeAmbienceIDs, ["rain_light"], "Still the same scene, still reading")
+
+        // The book is put down.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.9))
+        XCTAssertTrue(player.activeAmbienceIDs.isEmpty, "Fades once nobody has read for the quiet timeout")
+    }
+
     func testStopAllClearsAmbience() {
         let player = SoundEffectPlayer(buffers: AudioBufferCache(preload: false), catalog: BundledSoundCatalog.shared, cloud: nil)
         player.setAmbience([event("rain_light")])

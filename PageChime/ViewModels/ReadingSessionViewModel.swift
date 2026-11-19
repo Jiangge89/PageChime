@@ -104,8 +104,10 @@ final class ReadingSessionViewModel: ObservableObject {
     private let textRecognizer: PageTextRecognizing
     private var sessionID: UInt = 0
 
-    /// Transcript length already scanned by the instant keyword path.
-    private var keywordScannedLength = 0
+    /// Keyword occurrences already handled, by sound and where the keyword
+    /// ends in the transcript, so a word plays once however often the
+    /// transcript tail is re-scanned or revised.
+    private var heardKeywords: [(soundID: String, end: Int)] = []
     /// Transcript length already handed to cache/LLM analysis.
     private var dispatchedLength = 0
     private var segmentWorkItem: DispatchWorkItem?
@@ -387,6 +389,9 @@ final class ReadingSessionViewModel: ObservableObject {
                 speechService.contextualStrings = TriggerLibrary.contextualStrings(for: language)
             }
             try await speechService.start(language: language)
+            if !speechService.recognitionMode.isEmpty {
+                appendLog(text: "", method: .info, waitMs: 0, analysisMs: 0, soundIDs: [], note: "speech recognition: " + speechService.recognitionMode)
+            }
             if let ambience = pageAmbience, !ambience.isEmpty {
                 applyScene(Set(ambience), sourceText: "")
             }
@@ -414,7 +419,7 @@ final class ReadingSessionViewModel: ObservableObject {
         state = .ready
         transcript = ""
         recentEffects = []
-        keywordScannedLength = 0
+        heardKeywords = []
         dispatchedLength = 0
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -446,7 +451,6 @@ final class ReadingSessionViewModel: ObservableObject {
         soundPlayer.noteSpeechActivity()
 
         // Partial results can be revised shorter; never point past the end.
-        keywordScannedLength = min(keywordScannedLength, newTranscript.count)
         dispatchedLength = min(dispatchedLength, newTranscript.count)
 
         runPageCues(newTranscript)
@@ -457,30 +461,40 @@ final class ReadingSessionViewModel: ObservableObject {
     // MARK: - Instant Keyword Path
 
     /// Runs on every partial result so obvious sounds fire immediately,
-    /// without waiting for debounce or the network.
+    /// without waiting for debounce or the network. The tail of the
+    /// transcript is scanned every time, because recognition revises its
+    /// last words; an occurrence already heard (same sound, about the same
+    /// place) is never played again.
     private func runKeywordPath(_ text: String) {
-        guard text.count > keywordScannedLength else { return }
-
-        // Re-scan a short tail so keywords and negations split across
-        // updates are still seen; cooldowns prevent double playback.
-        let overlap = language == .chinese ? 10 : 24
-        var start = text.index(text.startIndex, offsetBy: max(0, keywordScannedLength - overlap))
-        // Don't start mid-word, or "then" could be scanned as "hen".
-        while start > text.startIndex, text[text.index(before: start)].isLetter {
-            start = text.index(before: start)
+        let window = language == .chinese ? 30 : 80
+        var start = text.index(text.endIndex, offsetBy: -window, limitedBy: text.startIndex) ?? text.startIndex
+        if language != .chinese {
+            // Don't start mid-word, or "then" could be scanned as "hen".
+            while start > text.startIndex, text[text.index(before: start)].isLetter {
+                start = text.index(before: start)
+            }
         }
-        let window = String(text[start...])
-        keywordScannedLength = text.count
+        let offset = text.distance(from: text.startIndex, to: start)
+        let tail = String(text[start...])
+        // How far an occurrence may shift between partial results (a
+        // revised word before it) and still count as the same one.
+        let tolerance = language == .chinese ? 4 : 12
 
         let analysisStart = currentTime()
-        let events = eventEngine.analyze(text: window, language: language)
-        let played = events.map(\.soundID).filter {
-            playSound($0, sourceText: window, position: text.count)
+        var played: [String] = []
+        for match in eventEngine.matches(in: tail, language: language) {
+            let end = offset + match.end
+            guard !heardKeywords.contains(where: { $0.soundID == match.soundID && abs($0.end - end) <= tolerance }) else { continue }
+            heardKeywords.append((match.soundID, end))
+            if playSound(match.soundID, sourceText: tail, position: end) {
+                played.append(match.soundID)
+            }
         }
+        if heardKeywords.count > 100 { heardKeywords.removeFirst(heardKeywords.count - 100) }
         guard !played.isEmpty else { return }
 
         let analysisMs = Int(currentTime().timeIntervalSince(analysisStart) * 1000)
-        appendLog(text: window, method: .keyword, waitMs: 0, analysisMs: analysisMs, soundIDs: played)
+        appendLog(text: tail, method: .keyword, waitMs: 0, analysisMs: analysisMs, soundIDs: played)
     }
 
     // MARK: - Cache / LLM Path
@@ -569,7 +583,7 @@ final class ReadingSessionViewModel: ObservableObject {
             guard let self, !Task.isCancelled, self.sessionID == capturedSession else { return }
             self.llmTasks[taskID] = nil
             self.handleLLMResult(
-                result, segment: segment, segmentStart: segmentStart, position: text.count,
+                result, segment: segment, context: context, segmentStart: segmentStart, position: text.count,
                 language: segmentLanguage, waitMs: waitMs, analysisStart: analysisStart
             )
         }
@@ -577,7 +591,7 @@ final class ReadingSessionViewModel: ObservableObject {
 
     private func handleLLMResult(
         _ result: Result<SoundAnalysis, Error>,
-        segment: String, segmentStart: Int, position: Int,
+        segment: String, context: String, segmentStart: Int, position: Int,
         language: ReadingLanguage, waitMs: Int, analysisStart: Date
     ) {
         let elapsed = currentTime().timeIntervalSince(analysisStart)
@@ -597,7 +611,16 @@ final class ReadingSessionViewModel: ObservableObject {
         // added to the server after this app version's library was fetched).
         let known = analysis.sounds.filter { catalog.info(for: $0.id) != nil }
         let isAmbience = { (id: String) in self.catalog.info(for: id)?.isAmbience ?? false }
-        let oneShots = known.filter { !isAmbience($0.id) }
+        // The model also sees earlier text and sometimes names its sounds
+        // again; a one-shot whose phrase is only in that context was already
+        // played (or deliberately not) when that text was read.
+        let newText = SoundCache.normalize(segment, language: language)
+        let earlierText = SoundCache.normalize(context, language: language)
+        let fromContext = known.filter { match in
+            let trigger = SoundCache.normalize(match.trigger, language: language)
+            return !isAmbience(match.id) && !trigger.isEmpty && !newText.contains(trigger) && earlierText.contains(trigger)
+        }.map(\.id)
+        let oneShots = known.filter { !isAmbience($0.id) && !fromContext.contains($0.id) }
         let inlineAmbience = known.map(\.id).filter(isAmbience)
         soundCache.store(triggers: oneShots, language: language)
 
@@ -624,6 +647,9 @@ final class ReadingSessionViewModel: ObservableObject {
         }
         if !dropped.isEmpty {
             notes.append("late, skipped: " + dropped.joined(separator: ", "))
+        }
+        if !fromContext.isEmpty {
+            notes.append("earlier text, skipped: " + fromContext.joined(separator: ", "))
         }
 
         // Download what the story is heading towards, so it plays instantly.
@@ -671,7 +697,12 @@ final class ReadingSessionViewModel: ObservableObject {
 
         soundPlayer.play(event: event)
         addRecentEffect(event)
-        if catalog.info(for: soundID)?.isAmbience != true { lastOneShot = event }
+        if catalog.info(for: soundID)?.isAmbience == true {
+            // A background sound started by a keyword is part of the scene too.
+            if currentScene.insert(soundID).inserted { sceneIDs = currentScene.sorted() }
+        } else {
+            lastOneShot = event
+        }
         cooldowns[soundID] = now
         lastPlayedPosition[soundID] = position
         return true

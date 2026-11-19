@@ -6,6 +6,7 @@ struct SettingsView: View {
     /// Opens the first-launch guide again.
     var onShowGuide: () -> Void = {}
     @AppStorage("dimWhileReading") private var dimWhileReading = true
+    @AppStorage("onDeviceRecognition") private var onDeviceRecognition = true
     @Environment(\.dismiss) private var dismiss
 
     private var copy: Copy { Copy(chinese: viewModel.language == .chinese) }
@@ -27,7 +28,7 @@ struct SettingsView: View {
                 }
                 .listRowBackground(Theme.surface)
 
-                Section(copy("While reading", "朗读时")) {
+                Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(copy("Sound effect volume", "音效音量"))
                         HStack(spacing: 12) {
@@ -44,6 +45,15 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                     Toggle(copy("Dim the screen", "调暗屏幕"), isOn: $dimWhileReading)
                         .tint(Theme.gold)
+                    Toggle(copy("Recognize speech on this phone", "在手机上识别语音"), isOn: $onDeviceRecognition)
+                        .tint(Theme.gold)
+                } header: {
+                    Text(copy("While reading", "朗读时"))
+                } footer: {
+                    Text(copy(
+                        "Speech on this phone is faster and steadier, and works without internet. Turn it off if words are often misheard. Applies from the next reading.",
+                        "更快、更稳定，不联网也能用。如果经常听错，可以关闭。下次开始朗读时生效。"
+                    ))
                 }
                 .listRowBackground(Theme.surface)
 
@@ -178,6 +188,7 @@ struct DebugLogView: View {
         case .page: return .purple
         case .noMatch: return .gray
         case .error: return .red
+        case .info: return .secondary
         }
     }
 }

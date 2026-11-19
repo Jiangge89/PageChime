@@ -9,4 +9,10 @@ protocol SpeechRecognizing: AnyObject {
     func requestPermissions() async -> Bool
     func start(language: ReadingLanguage) async throws
     func stop()
+    /// Where speech is recognized, for the debug log.
+    var recognitionMode: String { get }
+}
+
+extension SpeechRecognizing {
+    var recognitionMode: String { "" }
 }

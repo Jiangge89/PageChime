@@ -89,20 +89,8 @@ struct ReadingView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.muted)
             Spacer()
-            HStack(spacing: 6) {
-                Circle().fill(mood.dot).frame(width: 7, height: 7)
-                Text(sceneIDs.first.map(SoundName.scene) ?? copy("Quiet", "安静"))
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text.opacity(0.9))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(.white.opacity(0.08), in: Capsule())
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("sceneChip")
-            .accessibilityLabel(copy("Scene", "场景") + ": " + (sceneIDs.first.map(SoundName.scene) ?? copy("Quiet", "安静")))
         }
+        .frame(height: 44)
     }
 
     @ViewBuilder
@@ -120,31 +108,58 @@ struct ReadingView: View {
         case .error(let error):
             message(icon: "exclamationmark.triangle", text: error, action: nil)
         default:
-            ZStack {
-                Circle().stroke(Theme.text.opacity(0.10), lineWidth: 1)
-                Circle().stroke(Theme.text.opacity(0.18), lineWidth: 1).padding(30)
-                Circle().stroke(Theme.gold.opacity(0.55), lineWidth: 1.5).padding(60)
-                    .scaleEffect(ripple)
-                    .opacity(Double(ripple))
-                VStack(spacing: 6) {
-                    Text(centerTitle)
-                        .font(Theme.serif(28))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.7)
-                        .foregroundStyle(Theme.text)
-                        .multilineTextAlignment(.center)
-                        .contentTransition(.opacity)
-                        .animation(.easeInOut(duration: 0.4), value: centerTitle)
-                    Text(centerCaption)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.faint)
-                }
-                .padding(.horizontal, 70)
+            VStack(spacing: 18) {
+                rings
+                sceneLine
             }
-            .frame(width: 280, height: 280)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("readingCenter")
         }
+    }
+
+    private var rings: some View {
+        ZStack {
+            Circle().stroke(Theme.text.opacity(0.10), lineWidth: 1)
+            Circle().stroke(Theme.text.opacity(0.18), lineWidth: 1).padding(30)
+            Circle().stroke(Theme.gold.opacity(0.55), lineWidth: 1.5).padding(60)
+                .scaleEffect(ripple)
+                .opacity(Double(ripple))
+            VStack(spacing: 6) {
+                Text(centerTitle)
+                    .font(Theme.serif(28))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.4), value: centerTitle)
+                Text(centerCaption)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.faint)
+            }
+            .padding(.horizontal, 70)
+        }
+        .frame(width: 280, height: 280)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("readingCenter")
+    }
+
+    /// The background sounds playing now, under the latest sound. Space is
+    /// kept when there are none, so the rings don't jump.
+    private var sceneLine: some View {
+        let names = sceneIDs.prefix(3).map(SoundName.scene).joined(separator: " · ")
+        return HStack(spacing: 8) {
+            Circle().fill(mood.dot).frame(width: 7, height: 7)
+            Text(names)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.text.opacity(0.85))
+                .lineLimit(1)
+        }
+        .frame(height: 20)
+        .opacity(names.isEmpty || isPaused ? 0 : 1)
+        .animation(.easeInOut(duration: 0.6), value: names)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(copy("Background", "背景声") + ": " + names)
+        .accessibilityHidden(names.isEmpty || isPaused)
+        .accessibilityIdentifier("sceneLine")
     }
 
     private var centerTitle: String {

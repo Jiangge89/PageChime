@@ -26,6 +26,13 @@ final class SpeechRecognizerService: SpeechRecognizing {
     private var isRestarting = false
     private var interruptionObserver: Any?
 
+    /// Recognition on the phone itself, when its model supports the
+    /// language: faster and steadier than Apple's servers, works offline,
+    /// and has no one-minute limit (so no periodic restarts). Can be turned
+    /// off in Settings ("onDeviceRecognition") to compare.
+    private(set) var usesOnDeviceRecognition = false
+    var recognitionMode: String { usesOnDeviceRecognition ? "on device" : "Apple servers" }
+
     func requestPermissions() async -> Bool {
         let micGranted = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { granted in
@@ -67,14 +74,34 @@ final class SpeechRecognizerService: SpeechRecognizing {
             throw SpeechError.recognizerUnavailable
         }
 
+        let prefersOnDevice = UserDefaults.standard.object(forKey: "onDeviceRecognition") as? Bool ?? true
+        usesOnDeviceRecognition = prefersOnDevice && speechRecognizer.supportsOnDeviceRecognition
         accumulatedTranscript = ""
         transcript = ""
         isListening = true
         consecutiveRestarts = 0
         isRestarting = false
 
-        try configureAudioSession()
-        try startRecognitionTask()
+        let generation = sessionGeneration
+        do {
+            try configureAudioSession()
+            try startWithFreshEngine()
+        } catch {
+            // Right after the session is activated or microphone access is
+            // granted, the input route can still be changing, and the engine
+            // fails with a format error (-10868). Wait for it to settle.
+            try await Task.sleep(nanoseconds: 400_000_000)
+            guard sessionGeneration == generation, isListening else { return } // stopped meanwhile
+            do {
+                try configureAudioSession()
+                try startWithFreshEngine()
+            } catch {
+                isListening = false
+                stopRecognitionTask()
+                stopAudioEngine()
+                throw error
+            }
+        }
         updateState(.listening)
         startHealthCheck()
         observeInterruptions()
@@ -135,8 +162,8 @@ final class SpeechRecognizerService: SpeechRecognizing {
             return
         }
 
-        // Periodic restart to avoid Apple's ~60s recognition timeout
-        if now.timeIntervalSince(taskStartTime) > 50 {
+        // Periodic restart to avoid the server's ~60s recognition limit
+        if !usesOnDeviceRecognition, now.timeIntervalSince(taskStartTime) > 50 {
             restartIfNeeded()
             return
         }
@@ -193,6 +220,17 @@ final class SpeechRecognizerService: SpeechRecognizing {
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
 
+    /// An engine reads the input format when its input node is first used,
+    /// so a new one is built for every start: one made earlier may hold a
+    /// format from before the session or route changed.
+    private func startWithFreshEngine() throws {
+        stopRecognitionTask()
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine = AVAudioEngine()
+        try startRecognitionTask()
+    }
+
     private func startRecognitionTask() throws {
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest else {
@@ -200,7 +238,7 @@ final class SpeechRecognizerService: SpeechRecognizing {
         }
 
         recognitionRequest.shouldReportPartialResults = true
-        recognitionRequest.requiresOnDeviceRecognition = false
+        recognitionRequest.requiresOnDeviceRecognition = usesOnDeviceRecognition
         if !contextualStrings.isEmpty {
             recognitionRequest.contextualStrings = contextualStrings
         }
@@ -269,20 +307,27 @@ final class SpeechRecognizerService: SpeechRecognizing {
         isRestarting = true
         stopRecognitionTask()
         stopAudioEngine()
-        audioEngine = AVAudioEngine()
+        attemptRestart(after: 0.3, attemptsLeft: 2)
+    }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self, self.isListening else {
+    /// Restarts with a fresh engine; a failed attempt (e.g. the route is
+    /// still changing after an interruption) waits a little and tries again.
+    private func attemptRestart(after delay: TimeInterval, attemptsLeft: Int) {
+        let generation = sessionGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.isListening, self.sessionGeneration == generation else {
                 self?.isRestarting = false
                 return
             }
             do {
                 try self.configureAudioSession()
-                try self.startRecognitionTask()
+                try self.startWithFreshEngine()
                 self.isRestarting = false
+            } catch where attemptsLeft > 1 {
+                self.attemptRestart(after: 0.6, attemptsLeft: attemptsLeft - 1)
             } catch {
                 self.isRestarting = false
-                self.updateState(.error("Failed to restart recognition"))
+                self.updateState(.error("Failed to restart recognition: \(error.localizedDescription)"))
             }
         }
     }

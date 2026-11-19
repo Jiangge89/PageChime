@@ -19,5 +19,6 @@ struct AnalysisLog: Identifiable {
         case page = "Page"
         case noMatch = "No Match"
         case error = "Error"
+        case info = "Info"
     }
 }

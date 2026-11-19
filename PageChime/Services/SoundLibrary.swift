@@ -179,7 +179,9 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource, SoundPrefetch
             self.manifest = manifest
             self.etag = etag
             soundsByID = Dictionary(manifest.sounds.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            oneShotNames = Set(manifest.sounds.filter { $0.kind == .oneShot }.flatMap {
+            // Bundled sounds have keywords of their own; only sounds the LLM
+            // alone can pick make a segment worth sending early.
+            oneShotNames = Set(manifest.sounds.filter { $0.kind == .oneShot && bundled.info(for: $0.id) == nil }.flatMap {
                 $0.name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
             })
         }
@@ -240,7 +242,10 @@ final class SoundLibrary: SoundCatalogProviding, CloudSoundSource, SoundPrefetch
     @discardableResult
     func prefetch(_ soundIDs: [String]) -> [String] {
         var unique: [String] = []
-        for id in soundIDs where !unique.contains(id) && hasCloudVariants(id) && !hasDownloadedVariant(id) {
+        // A sound shipped with the app already plays at once; its other
+        // variants are fetched after it first plays.
+        for id in soundIDs where !unique.contains(id) && hasCloudVariants(id) && !hasDownloadedVariant(id)
+            && AudioBufferCache.bundledFile(for: id) == nil {
             unique.append(id)
         }
         let queued = lock.withLock { () -> [String] in
