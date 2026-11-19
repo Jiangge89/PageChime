@@ -14,6 +14,22 @@ final class StoryEventEngineTests: XCTestCase {
         super.tearDown()
     }
 
+    // MARK: - Onboarding Demo
+
+    /// The first-launch demo must work offline, from keywords alone.
+    func testOnboardingDemoSentencesTriggerAllTheirSounds() {
+        for language in ReadingLanguage.allCases {
+            let demo = DemoSentence.for(language)
+            let text = demo.pieces.map(\.text).joined()
+            let found = Set(StoryEventEngine().analyze(text: text, language: language).map(\.soundID))
+            XCTAssertEqual(found, Set(demo.parts.map(\.soundID)), "\(language): \(text)")
+            for piece in demo.pieces where piece.soundID != nil {
+                let alone = StoryEventEngine().analyze(text: piece.text, language: language).map(\.soundID)
+                XCTAssertEqual(alone, [piece.soundID!], "Each highlighted phrase should set off its own sound: \(piece.text)")
+            }
+        }
+    }
+
     // MARK: - Basic Detection
 
     func testFrogAndWaterSplash() {

@@ -11,6 +11,9 @@ struct ContentView: View {
     @State private var photo: PhotosPickerItem?
     /// The scan in progress redoes the current page instead of adding one.
     @State private var rescanning = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    /// Onboarding opened again from Settings.
+    @State private var replayingOnboarding = false
 
     enum Screen { case home, page, reading, recap }
 
@@ -20,6 +23,46 @@ struct ContentView: View {
         ZStack {
             Theme.night.ignoresSafeArea()
 
+            if !hasCompletedOnboarding || replayingOnboarding {
+                OnboardingView(viewModel: viewModel, isReplay: replayingOnboarding) {
+                    hasCompletedOnboarding = true
+                    replayingOnboarding = false
+                    screen = .home
+                }
+                .transition(.opacity)
+            } else {
+                flow
+            }
+        }
+        .animation(.easeInOut(duration: 0.35), value: screen)
+        .animation(.easeInOut(duration: 0.35), value: hasCompletedOnboarding)
+        .animation(.easeInOut(duration: 0.35), value: replayingOnboarding)
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showSettings) {
+            SettingsView(viewModel: viewModel) {
+                showSettings = false
+                replayingOnboarding = true
+            }
+        }
+        .sheet(isPresented: $showScanner) {
+            DocumentScannerView { pages in handleScan(pages) }
+                .ignoresSafeArea()
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photo, matching: .images)
+        .onChange(of: photo) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    handleScan([image])
+                }
+                photo = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var flow: some View {
+        ZStack {
             switch screen {
             case .home:
                 HomeView(
@@ -75,25 +118,6 @@ struct ContentView: View {
                     onDone: finishStory
                 )
                 .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut(duration: 0.35), value: screen)
-        .preferredColorScheme(.dark)
-        .sheet(isPresented: $showSettings) {
-            SettingsView(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showScanner) {
-            DocumentScannerView { pages in handleScan(pages) }
-                .ignoresSafeArea()
-        }
-        .photosPicker(isPresented: $showPhotoPicker, selection: $photo, matching: .images)
-        .onChange(of: photo) { _, item in
-            guard let item else { return }
-            Task {
-                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                    handleScan([image])
-                }
-                photo = nil
             }
         }
     }

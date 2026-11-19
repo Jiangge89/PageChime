@@ -3,6 +3,8 @@ import SwiftUI
 /// Language, volume and the developer log, out of the way of reading.
 struct SettingsView: View {
     @ObservedObject var viewModel: ReadingSessionViewModel
+    /// Opens the first-launch guide again.
+    var onShowGuide: () -> Void = {}
     @AppStorage("dimWhileReading") private var dimWhileReading = true
     @Environment(\.dismiss) private var dismiss
 
@@ -42,6 +44,14 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                     Toggle(copy("Dim the screen", "调暗屏幕"), isOn: $dimWhileReading)
                         .tint(Theme.gold)
+                }
+                .listRowBackground(Theme.surface)
+
+                Section {
+                    Button(action: onShowGuide) {
+                        Label(copy("How to use PageChime", "PageChime 使用指南"), systemImage: "sparkles")
+                            .foregroundStyle(Theme.text)
+                    }
                 }
                 .listRowBackground(Theme.surface)
 
