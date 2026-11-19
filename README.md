@@ -132,11 +132,30 @@ The catalog part of the prompt is identical on every call, so OpenAI serves it f
 2. Generate the Xcode project: `xcodegen generate` (the project is defined in `project.yml`).
 3. Open `PageChime.xcodeproj` in Xcode and select your development team under **Signing & Capabilities**.
 4. Select a simulator or connected iPhone as the run destination.
-5. Press **⌘R** to build and run. Press **⌘U** to run the unit tests; `npm test` in `backend/` runs the backend tests.
+5. Press **⌘R** to build and run. Press **⌘U** to run the tests (see [Testing](#testing)).
 
 Debug builds talk to `http://localhost:8787` (`PAGECHIME_BACKEND_URL` in `project.yml`). That works from the simulator, which can't use App Attest and so gets a dev session (`ALLOW_DEV_SESSIONS=true` in `.dev.vars`). On a physical iPhone, `localhost` is the phone itself: run `npx wrangler dev --ip 0.0.0.0` and set `PAGECHIME_BACKEND_URL` to `http://<your Mac's LAN IP>:8787`, or use the deployed URL. A device always goes through App Attest, even in Debug.
 
 > **Security note:** the OpenAI key lives only on the backend (`.dev.vars` locally, a Worker secret in production). An older `PageChime/Config/Secrets.swift` is no longer compiled in and can be deleted.
+
+### Testing
+
+| Layer | What it covers | Needs |
+|---|---|---|
+| Backend (`npm test` in `backend/`) | Worker routes, prompt parsing, App Attest, tokens, sound gaps, library build, audio checks and batch planning | Nothing |
+| App unit tests (`PageChimeTests`) | Keyword engine, view model (segments, cache, LLM merging, page cues, pause/resume, story totals), sound library, player, backend client, on-device text recognition, the onboarding demo sentences | Nothing |
+| Live tests (`LiveBackendTests`, `LivePipelineTests`) | The real pipeline against a running backend: a rendered page goes through Vision text recognition and page analysis, a scripted reader reads it, and every cue must play in reading order; reading without scanning must get keyword sounds and an LLM scene; library download and streaming | `npm run dev` in `backend/` with the library uploaded |
+| UI end-to-end tests (`PageChimeUITests`) | The app driven through its screens: first-launch onboarding (skip, demo, replay from Settings), reading without scanning with pause, resume and the recap, scan → read → next page → recap, and Chinese | The backend, for the scanning test |
+
+The simulator has no microphone or document camera, so tests replace exactly those two: launched with `-ui-testing` (Debug builds only), the app reads `UITEST_SPEECH` with a scripted reader that grows the transcript a word at a time (`||` marks a page break, where it waits for the next start) and "scans" the pages in `UITEST_PAGES` by rendering them as photos. Everything after that (text recognition, the backend, cue matching, playback) is the real code.
+
+Live and scanning tests are skipped unless `PAGECHIME_LIVE_BACKEND` is set. With the backend running:
+
+```bash
+TEST_RUNNER_PAGECHIME_LIVE_BACKEND=http://localhost:8787 xcodebuild test -project PageChime.xcodeproj -scheme PageChime -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+Add `-only-testing:PageChimeUITests` to run just the UI tests (about 1.5 minutes). What can't run in the simulator, and still needs a device: real speech recognition and microphone input, App Attest, the document camera, screen dimming, and how the sounds actually sound.
 
 ### Deploying the Backend
 

@@ -4,6 +4,10 @@ import SwiftUI
 struct PageChimeApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        UITestHooks.resetStateIfRequested()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

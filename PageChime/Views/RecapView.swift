@@ -32,8 +32,11 @@ struct RecapView: View {
                 if let story {
                     HStack(spacing: 10) {
                         stat(minutes(story), copy(minutes(story) == 1 ? "minute" : "minutes", "分钟"))
+                            .accessibilityIdentifier("recapMinutes")
                         stat(story.pages, copy(story.pages == 1 ? "page" : "pages", "页"))
+                            .accessibilityIdentifier("recapPages")
                         stat(story.soundCount, copy(story.soundCount == 1 ? "sound" : "sounds", "个音效"))
+                            .accessibilityIdentifier("recapSounds")
                     }
 
                     if !story.soundIDs.isEmpty {

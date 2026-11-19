@@ -100,6 +100,7 @@ struct ReadingView: View {
             .padding(.vertical, 7)
             .background(.white.opacity(0.08), in: Capsule())
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("sceneChip")
             .accessibilityLabel(copy("Scene", "场景") + ": " + (sceneIDs.first.map(SoundName.scene) ?? copy("Quiet", "安静")))
         }
     }
@@ -142,6 +143,7 @@ struct ReadingView: View {
             }
             .frame(width: 280, height: 280)
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("readingCenter")
         }
     }
 
@@ -176,6 +178,7 @@ struct ReadingView: View {
                     .foregroundStyle(Theme.faint)
             }
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("pageProgress")
         }
     }
 

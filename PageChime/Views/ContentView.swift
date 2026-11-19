@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The reading flow: home → page scanned → reading → the end.
 struct ContentView: View {
-    @StateObject private var viewModel = ReadingSessionViewModel()
+    @StateObject private var viewModel = ReadingSessionViewModel.forLaunch()
     @State private var screen: Screen = .home
     @State private var showSettings = false
     @State private var showScanner = false
@@ -133,6 +133,10 @@ struct ContentView: View {
     /// The document camera on a device, a photo picker in the simulator.
     private func scan(replacing: Bool) {
         rescanning = replacing
+        if let photo = UITestHooks.nextPagePhoto(replacing: replacing) {
+            handleScan([photo])
+            return
+        }
         if DocumentScannerView.isAvailable {
             showScanner = true
         } else {

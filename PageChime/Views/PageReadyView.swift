@@ -97,6 +97,7 @@ struct PageReadyView: View {
                             : copy("\(page.cues.count) \(page.cues.count == 1 ? "sound" : "sounds") ready", "\(page.cues.count) 个音效已就绪"))
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.text)
+                            .accessibilityIdentifier("soundsReady")
                         if !page.cues.isEmpty {
                             Text(copy("· play when you read them", "· 读到就会响"))
                                 .font(.system(size: 14))
